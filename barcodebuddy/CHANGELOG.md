@@ -5,6 +5,20 @@ All notable changes to Barcode Buddy (Python) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.15.2-beta] - 2025-11-23
+
+### Fixed
+- **UX Issue:** Auto-refresh now pauses when user interacts with pending items
+- Dropdown selection no longer interrupted by 2-second auto-refresh
+- Users can now comfortably select products without the list resetting
+
+### Technical Details
+- `loadPending()` skips refresh when:
+  - Product dropdown has focus
+  - Product dropdown has selected value
+  - Use Existing/Create New buttons have focus
+- Improves user experience significantly
+
 ## [2.15.1-beta] - 2025-11-23
 
 ### Fixed
