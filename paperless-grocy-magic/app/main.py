@@ -40,10 +40,36 @@ if config.paperless_url and config.paperless_api_key:
 else:
     logger.warning("⚠️  Paperless not configured")
 
-# Initialize Alias Manager
+# Initialize Alias Manager with configurable storage location
 logger.info("Initializing Product Alias Manager...")
-alias_manager = AliasManager()
-logger.info(f"✅ Alias Manager initialized with {alias_manager.get_count()} aliases")
+
+# Determine storage location based on configuration
+storage_location = config.alias_storage_location
+if storage_location == 'shared':
+    alias_path = '/share/paperless-grocy-magic/product_aliases.json'
+    logger.info("📂 Using SHARED storage location: /share/paperless-grocy-magic/")
+else:
+    alias_path = '/data/product_aliases.json'
+    logger.info("📂 Using LOCAL storage location: /data/")
+
+# Check for migration from /data to /share
+if storage_location == 'shared':
+    from pathlib import Path
+    import shutil
+    old_path = Path('/data/product_aliases.json')
+    new_path = Path(alias_path)
+
+    if old_path.exists() and not new_path.exists():
+        logger.info("🔄 Migrating aliases from /data to /share...")
+        try:
+            new_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(old_path, new_path)
+            logger.info(f"✅ Successfully migrated aliases to {alias_path}")
+        except Exception as e:
+            logger.error(f"❌ Failed to migrate aliases: {e}")
+
+alias_manager = AliasManager(alias_path)
+logger.info(f"✅ Alias Manager initialized with {alias_manager.get_count()} aliases from {alias_path}")
 
 # Initialize Grocy client and price updater
 grocy_client = None

@@ -5,6 +5,46 @@ All notable changes to Paperless Grocy Magic will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1-beta] - 2025-11-23
+
+### Added
+- **📂 Configurable Alias Storage Location** - Choose between local (`/data`) or shared (`/share`) storage!
+- New configuration option: `alias_storage_location` (values: `local` or `shared`)
+- Automatic migration from `/data` to `/share` when switching to shared mode
+- Shared storage allows multiple Home Assistant add-ons to access the same aliases
+- Storage location clearly logged on startup
+
+### Changed
+- `Config` class now includes `alias_storage_location` property
+- `AliasManager` initialization now accepts custom file path
+- Startup logs show which storage location is being used
+
+### Technical Details
+- **Local mode** (default): Aliases stored in `/data/product_aliases.json`
+  - Isolated per add-on
+  - Included in add-on specific backups
+- **Shared mode**: Aliases stored in `/share/paperless-grocy-magic/product_aliases.json`
+  - Accessible by multiple add-ons
+  - Shared across Home Assistant instance
+  - Can be accessed via File Editor add-on
+- Migration happens automatically on first startup when switching from local to shared
+- Original file in `/data` is preserved (copied, not moved) for safety
+
+### Configuration Example
+```yaml
+# Use local storage (default)
+alias_storage_location: "local"
+
+# Or use shared storage (accessible by other add-ons)
+alias_storage_location: "shared"
+```
+
+### Use Cases
+- **Local**: Single add-on usage (default, recommended for most users)
+- **Shared**: Multiple add-ons need access to same aliases (advanced usage)
+- **Shared**: Manual editing via Home Assistant File Editor
+- **Shared**: Sharing aliases with custom scripts/automations
+
 ## [0.6.0-beta] - 2025-11-23
 
 ### Added

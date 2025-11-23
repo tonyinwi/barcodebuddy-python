@@ -1,5 +1,5 @@
 name: "Paperless Grocy Magic"
-version: "0.6.0-beta"
+version: "0.6.1-beta"
 slug: "paperless-grocy-magic"
 description: "Parse receipts from Paperless-ngx and sync prices to Grocy"
 arch:
@@ -40,6 +40,9 @@ options:
   # Matching Configuration
   fuzzy_match_threshold: 0.8
 
+  # Alias Storage Location
+  alias_storage_location: "local"
+
   # Supported Stores
   supported_stores:
     - "rewe"
@@ -68,6 +71,9 @@ schema:
 
   # Matching Configuration
   fuzzy_match_threshold: float(0.5,1.0)
+
+  # Alias Storage Location
+  alias_storage_location: list(local|shared)
 
   # Supported Stores
   supported_stores:

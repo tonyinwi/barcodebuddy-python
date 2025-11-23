@@ -75,6 +75,11 @@ class Config:
         return self._config.get('fuzzy_match_threshold', 0.8)
 
     @property
+    def alias_storage_location(self) -> str:
+        """Get alias storage location ('local' or 'shared')."""
+        return self._config.get('alias_storage_location', 'local').strip().lower()
+
+    @property
     def supported_stores(self) -> list:
         """Get list of supported store names."""
         return self._config.get('supported_stores', ['rewe', 'edeka', 'aldi', 'lidl', 'penny'])
