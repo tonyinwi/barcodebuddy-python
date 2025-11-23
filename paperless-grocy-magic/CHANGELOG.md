@@ -5,6 +5,40 @@ All notable changes to Paperless Grocy Magic will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.9-beta] - 2025-11-23
+
+### Added
+- **🔗 Cross-Reference Table Enhancement** - Extended ProductAlias with lifecycle tracking
+  - New field: `openfood_name` - Stores full product name from OpenFoodFacts/UPC databases
+  - New field: `has_grocy_barcode` - Tracks if barcode is registered in Grocy
+  - Enables intelligent product identification across receipt processing cycles
+
+- **New AliasManager Methods**
+  - `update_openfood_name(receipt_name, openfood_name)` - Update external database name
+  - `mark_barcode_added_to_grocy(receipt_name, barcode)` - Mark barcode as registered
+  - `get_aliases_without_grocy_barcode()` - Filter products needing barcodes
+  - `get_alias_by_product_id(product_id)` - Reverse lookup by Grocy product ID
+
+### Changed
+- **Enhanced Receipt Processing** - Uses cross-reference table for better product identification
+  - When processing receipts, checks if matched products have `openfood_name` in cross-table
+  - If found, uses OpenFoodFacts name for display/logging instead of receipt abbreviation
+  - Example: Receipt shows "senfk" → Logs show "Senfkörner" (from previous barcode scan correction)
+  - Provides continuity across multiple receipt processing cycles
+
+### Workflow Integration
+This release integrates with Barcode Buddy v2.18.0-beta workflow:
+1. Paperless Grocy Magic processes receipt → Creates "senfk" product
+2. Barcode Buddy scans barcode → User corrects name to "Senfkörner"
+3. Cross-table updated with `openfood_name="Senfkörner"`, `has_grocy_barcode=true`
+4. Next receipt with "senfk" → Paperless Grocy Magic uses "Senfkörner" for logging
+
+### Technical Details
+- Extended `ProductAlias.__init__()` with `openfood_name` and `has_grocy_barcode` parameters
+- Enhanced `ProductAlias.to_dict()` and `from_dict()` for new fields
+- Modified `price_updater.py` to check cross-table during receipt matching
+- Backward compatible with existing alias files (new fields optional)
+
 ## [0.6.8-beta] - 2025-11-23
 
 ### Added
