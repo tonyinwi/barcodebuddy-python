@@ -193,10 +193,17 @@ class GrocyClient:
 
         Returns True if successful, False otherwise.
         """
-        data = {
-            'name': new_name
-        }
-        result = self._request('PUT', f'objects/products/{product_id}', json=data)
+        # First, get the current product data
+        product = self.get_product_info(product_id)
+        if not product:
+            logger.error(f"Failed to get product {product_id} for name update")
+            return False
+
+        # Update the name field
+        product['name'] = new_name
+
+        # Send the complete product back to Grocy
+        result = self._request('PUT', f'objects/products/{product_id}', json=product)
         if result:
             logger.info(f"✅ Updated product {product_id} name to '{new_name}'")
             return True
