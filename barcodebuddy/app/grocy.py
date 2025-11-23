@@ -121,6 +121,13 @@ class GrocyClient:
         """Get product information."""
         return self._request('GET', f'objects/products/{product_id}')
 
+    def get_all_products(self) -> Optional[list]:
+        """Get all products from Grocy."""
+        result = self._request('GET', 'objects/products')
+        if result is not None:
+            return result if isinstance(result, list) else []
+        return None
+
     def get_default_location_id(self) -> int:
         """Get the first available location ID from Grocy."""
         result = self._request('GET', 'objects/locations')
