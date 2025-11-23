@@ -287,6 +287,29 @@
         }
 
         function loadPending() {
+            // Don't refresh if user is interacting with dropdowns or buttons
+            const activeElement = document.activeElement;
+            if (activeElement && (
+                activeElement.classList.contains('product-select') ||
+                activeElement.classList.contains('btn-use-existing') ||
+                activeElement.classList.contains('btn-create-new')
+            )) {
+                console.log('Skipping pending refresh - user is interacting');
+                return;
+            }
+
+            // Also check if any dropdown is open (has focus or has a selected value)
+            const openSelects = document.querySelectorAll('.product-select:focus, .product-select option:checked');
+            if (openSelects.length > 0) {
+                const hasSelection = Array.from(openSelects).some(select => {
+                    return select.value !== '';
+                });
+                if (hasSelection) {
+                    console.log('Skipping pending refresh - dropdown has selection');
+                    return;
+                }
+            }
+
             fetch('api/pending')
                 .then(response => response.json())
                 .then(data => {
