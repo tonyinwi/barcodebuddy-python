@@ -5,6 +5,40 @@ All notable changes to Paperless Grocy Magic will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.7-beta] - 2025-11-23
+
+### Fixed
+- **🐛 CRITICAL: Product Creation ID Extraction** - Fixed stock addition failure after product creation
+- Properly extract `created_object_id` from Grocy's product creation response
+- Fetch full product data after creation instead of using incomplete response
+- Fixes "product_id=None" error causing 500 responses from Grocy
+
+### Technical Details
+**Root Cause:** When creating a product, Grocy returns `{"created_object_id":"123"}` but the code was trying to create a GrocyProduct directly from this minimal response, resulting in `id=None`. This caused stock additions to use URL `/stock/products/None/add` which failed with HTTP 500.
+
+**Before:**
+```python
+result = self._request('POST', '/objects/products', json=product_data)
+new_product = GrocyProduct(result)  # BUG: result only has created_object_id!
+# Later: add_to_stock(product_id=None) → 500 Error
+```
+
+**After:**
+```python
+result = self._request('POST', '/objects/products', json=product_data)
+if result and 'created_object_id' in result:
+    product_id = int(result['created_object_id'])  # Extract ID
+    new_product = self.get_product(product_id)     # Fetch full data
+    # Now: add_to_stock(product_id=123) → Success!
+```
+
+### Impact
+- Receipt processing now works end-to-end!
+- Products are created AND added to stock successfully
+- Prices are stored correctly in Grocy
+- Auto-aliases are created for all products
+- No more "Created X but failed to add to stock" errors
+
 ## [0.6.6-beta] - 2025-11-23
 
 ### Added

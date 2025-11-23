@@ -201,12 +201,22 @@ class GrocyClient:
             logger.debug(f"Creating product with data: {product_data}")
             result = self._request('POST', '/objects/products', json=product_data)
 
-            if result:
-                new_product = GrocyProduct(result)
-                logger.info(f"Created product: {new_product}")
-                return new_product, ""
+            if result and 'created_object_id' in result:
+                # Grocy returns {"created_object_id": "123"} - extract the ID
+                product_id = int(result['created_object_id'])
+                logger.debug(f"Product created with ID: {product_id}")
 
-            error_msg = "Grocy API returned empty response for POST /objects/products"
+                # Fetch the full product data
+                new_product = self.get_product(product_id)
+                if new_product:
+                    logger.info(f"Created product: {new_product}")
+                    return new_product, ""
+                else:
+                    error_msg = f"Product {product_id} was created but could not be fetched"
+                    logger.error(error_msg)
+                    return None, error_msg
+
+            error_msg = "Grocy API returned empty or invalid response for POST /objects/products"
             logger.error(error_msg)
             return None, error_msg
 
