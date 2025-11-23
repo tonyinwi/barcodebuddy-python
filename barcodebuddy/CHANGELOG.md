@@ -5,6 +5,61 @@ All notable changes to Barcode Buddy (Python) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.18.0-beta] - 2025-11-23
+
+### Added
+- **🔗 Cross-Reference Table (Kreuztabelle)** - Complete product lifecycle tracking
+  - Maps: Receipt name ↔ OpenFoodFacts name ↔ Barcode ↔ Grocy product
+  - Tracks `openfood_name` from external databases
+  - Tracks `has_grocy_barcode` flag for barcode registration status
+  - Enables intelligent matching in future receipts
+
+- **🎯 Fuzzy Matching for Post-Receipt Scanning** - Smart product suggestions
+  - When scanning barcodes after receipt processing, system suggests best matches
+  - Uses difflib SequenceMatcher with 60% threshold for auto-selection
+  - Shows match percentage for transparency (>70%)
+  - Only shows products WITHOUT barcodes (prevents duplicate assignments)
+
+- **✏️ "Namen ändern" Button** - Update product name WITHOUT stock addition
+  - Orange button to distinguish from stock operations
+  - Updates product name with OpenFoodFacts/UPC name
+  - Adds barcode to Grocy product
+  - Updates cross-reference table with `openfood_name`
+  - **Does NOT add to stock** (key difference from other buttons)
+  - Perfect for correcting receipt product names
+
+- **🔍 Product Filter** - Show only products needing barcodes
+  - Dropdown lists filtered to products without `has_grocy_barcode=true`
+  - Grouped display: "📝 From Receipts (ohne Barcode)" vs "📦 From Grocy"
+  - Reduces clutter, focuses on products needing attention
+
+### Changed
+- **Enhanced Receipt Processing** - Uses cross-reference table
+  - When processing receipts, checks cross-table for known items
+  - If product has `openfood_name`, uses that for display/logging
+  - Example: Receipt shows "senfk" → Logs show "Senfkörner" (from previous correction)
+  - Provides better product identification across multiple receipts
+
+- **Scanner Auto-Mode** - Documented existing intelligent behavior
+  - Known products (in Grocy or cross-table) → Direct stock addition
+  - Unknown products (from OpenFoodFacts/UPC) → Pending queue for user decision
+  - Prevents duplicate product creation
+
+### Complete Workflow Example
+1. **Process receipt** → Creates "senfk" product in Grocy
+2. **Scan barcode** → OpenFoodFacts returns "Senfkörner"
+3. **Fuzzy match** → Auto-selects "senfk" product (best match)
+4. **Click "Namen ändern"** → Updates product name to "Senfkörner", adds barcode to Grocy
+5. **Cross-table updated** → `openfood_name="Senfkörner"`, `has_grocy_barcode=true`
+6. **Next receipt with "senfk"** → Logs show "Senfkörner", uses correct name
+
+### Technical Details
+- New API endpoint: `POST /api/pending/change-name` for name-only updates
+- Enhanced API endpoint: `GET /api/available-products?search_term=X&without_barcode=true`
+- Extended ProductAlias with `openfood_name` and `has_grocy_barcode` fields
+- New AliasManager methods: `update_openfood_name()`, `mark_barcode_added_to_grocy()`, `get_aliases_without_grocy_barcode()`
+- New GrocyClient method: `update_product_name()`
+
 ## [2.17.0-beta] - 2025-11-23
 
 ### Added
