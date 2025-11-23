@@ -130,6 +130,23 @@ class PriceUpdateService:
                 if stock_success:
                     result.updated_count += 1
                     logger.info(f"✅ Updated & added to stock: {match.grocy_product.name} → {new_price:.2f}€")
+
+                    # Auto-create alias for future matching
+                    if self.matcher.alias_manager:
+                        receipt_name = match.receipt_item.name.strip().lower()
+                        existing_alias = self.matcher.alias_manager.get_alias(receipt_name)
+
+                        if not existing_alias:
+                            # Create new alias
+                            alias_created = self.matcher.alias_manager.add_alias(
+                                receipt_name=receipt_name,
+                                grocy_product_id=match.grocy_product.id,
+                                grocy_product_name=match.grocy_product.name,
+                                barcodes=[],
+                                notes=f"Auto-created from {receipt.store} receipt"
+                            )
+                            if alias_created:
+                                logger.info(f"   🔗 Auto-created alias: '{receipt_name}' → {match.grocy_product.name}")
                 else:
                     result.failed_count += 1
                     error_msg = f"Updated {match.grocy_product.name} but failed to add to stock: {stock_error}"
@@ -168,6 +185,19 @@ class PriceUpdateService:
                             match.grocy_product = new_product
                             match.was_created = True
                             break
+
+                    # Auto-create alias for newly created product
+                    if self.matcher.alias_manager:
+                        receipt_name = item.name.strip().lower()
+                        alias_created = self.matcher.alias_manager.add_alias(
+                            receipt_name=receipt_name,
+                            grocy_product_id=new_product.id,
+                            grocy_product_name=new_product.name,
+                            barcodes=[],
+                            notes=f"Auto-created with new product from {receipt.store} receipt"
+                        )
+                        if alias_created:
+                            logger.info(f"   🔗 Auto-created alias: '{receipt_name}' → {new_product.name}")
                 else:
                     result.unmatched_count += 1
                     error_msg = f"Created {item.name} but failed to add to stock: {stock_error}"

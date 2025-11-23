@@ -5,6 +5,33 @@ All notable changes to Paperless Grocy Magic will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.6-beta] - 2025-11-23
+
+### Added
+- **🔗 Automatic Alias Creation** - Aliases are now created automatically during receipt processing!
+- Auto-creates alias when a receipt item successfully matches a Grocy product
+- Auto-creates alias when a new product is created from receipt
+- Aliases include notes showing which store receipt they were created from
+
+### How It Works
+When processing a receipt:
+1. **Matched Products**: When "Vorderhaxe" (receipt) matches "Schweinshaxe gegart" (Grocy), an alias is automatically created
+2. **New Products**: When a new product is created from a receipt item, an alias is immediately created
+3. **Future Processing**: Next receipt with the same item name will match exactly via the alias (bypassing fuzzy matching)
+
+### Benefits
+- Matching accuracy improves over time automatically
+- Faster processing after first receipt from a store
+- Builds up knowledge base without manual configuration
+- Can still manually add/edit aliases via UI
+
+### Logging
+New log messages show alias creation:
+```
+✅ Updated & added to stock: Schweinshaxe gegart → 7.99€
+   🔗 Auto-created alias: 'vorderhaxe' → Schweinshaxe gegart
+```
+
 ## [0.6.5-beta] - 2025-11-23
 
 ### Changed
