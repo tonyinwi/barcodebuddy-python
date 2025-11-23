@@ -6,6 +6,7 @@ from datetime import datetime
 from grocy_client import GrocyClient
 from paperless_client import PaperlessClient
 from price_updater import PriceUpdateService
+from alias_manager import AliasManager
 
 # Configure logging
 logging.basicConfig(
@@ -39,6 +40,11 @@ if config.paperless_url and config.paperless_api_key:
 else:
     logger.warning("⚠️  Paperless not configured")
 
+# Initialize Alias Manager
+logger.info("Initializing Product Alias Manager...")
+alias_manager = AliasManager()
+logger.info(f"✅ Alias Manager initialized with {alias_manager.get_count()} aliases")
+
 # Initialize Grocy client and price updater
 grocy_client = None
 price_updater = None
@@ -51,7 +57,7 @@ if config.grocy_url and config.grocy_api_key:
         logger.info("Testing Grocy connection...")
         if grocy_client.test_connection():
             logger.info("Grocy connection successful, creating PriceUpdateService...")
-            price_updater = PriceUpdateService(grocy_client, config.fuzzy_match_threshold)
+            price_updater = PriceUpdateService(grocy_client, config.fuzzy_match_threshold, alias_manager)
             logger.info("✅ Grocy client initialized successfully")
         else:
             logger.error("❌ Grocy connection test failed")
@@ -143,6 +149,44 @@ Datum: 22.11.2025</textarea>
         <div class="panel">
             <h2>📊 Result</h2>
             <div id="result">Click "Process Receipt" to test...</div>
+        </div>
+    </div>
+
+    <div class="panel" style="margin-top: 20px;">
+        <h2>🔗 Product Aliases</h2>
+        <p style="color: #666; font-size: 14px;">
+            Map receipt product names to Grocy products for exact matching (bypasses fuzzy matching)
+        </p>
+
+        <div style="margin: 20px 0;">
+            <button onclick="loadAliases()" class="secondary">🔄 Refresh Aliases</button>
+            <button onclick="showAddAliasForm()" class="secondary">➕ Add Alias</button>
+        </div>
+
+        <div id="addAliasForm" style="display: none; background: #f0f0f0; padding: 15px; border-radius: 4px; margin: 10px 0;">
+            <h3>Add New Alias</h3>
+            <div style="margin: 10px 0;">
+                <label><strong>Receipt Name:</strong></label><br>
+                <input type="text" id="aliasReceiptName" placeholder="e.g., Vorderhaxe" style="width: 100%; padding: 8px; margin-top: 5px;">
+            </div>
+            <div style="margin: 10px 0;">
+                <label><strong>Grocy Product ID:</strong></label><br>
+                <input type="number" id="aliasProductId" placeholder="e.g., 123" style="width: 100%; padding: 8px; margin-top: 5px;">
+            </div>
+            <div style="margin: 10px 0;">
+                <label><strong>Grocy Product Name:</strong></label><br>
+                <input type="text" id="aliasProductName" placeholder="e.g., Schweinshaxe gegart" style="width: 100%; padding: 8px; margin-top: 5px;">
+            </div>
+            <div style="margin: 10px 0;">
+                <label><strong>Notes (optional):</strong></label><br>
+                <input type="text" id="aliasNotes" placeholder="Optional notes" style="width: 100%; padding: 8px; margin-top: 5px;">
+            </div>
+            <button onclick="addAlias()" style="background: #4CAF50;">💾 Save Alias</button>
+            <button onclick="hideAddAliasForm()" class="secondary">❌ Cancel</button>
+        </div>
+
+        <div id="aliasesList" style="margin-top: 20px;">
+            <em>Loading aliases...</em>
         </div>
     </div>
 
@@ -358,6 +402,121 @@ Datum: 22.11.2025</textarea>
                 resultDiv.innerHTML = `<span class="error">❌ Error: ${e.message}</span>`;
             });
         }
+
+        // Alias Management Functions
+        function loadAliases() {
+            const aliasesDiv = document.getElementById('aliasesList');
+            aliasesDiv.innerHTML = '<em>Loading...</em>';
+
+            fetch(baseUrl + '/api/aliases')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success && data.aliases.length > 0) {
+                        let html = '<table style="width: 100%; border-collapse: collapse;">';
+                        html += '<tr style="background: #f0f0f0; font-weight: bold;">';
+                        html += '<th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Receipt Name</th>';
+                        html += '<th style="padding: 8px; text-align: left; border: 1px solid #ddd;">→ Grocy Product</th>';
+                        html += '<th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Notes</th>';
+                        html += '<th style="padding: 8px; text-align: center; border: 1px solid #ddd;">Action</th>';
+                        html += '</tr>';
+
+                        data.aliases.forEach(alias => {
+                            html += '<tr>';
+                            html += `<td style="padding: 8px; border: 1px solid #ddd;"><strong>${alias.receipt_name}</strong></td>`;
+                            html += `<td style="padding: 8px; border: 1px solid #ddd;">${alias.grocy_product_name} <span style="color: #999;">(ID ${alias.grocy_product_id})</span></td>`;
+                            html += `<td style="padding: 8px; border: 1px solid #ddd; font-size: 12px; color: #666;">${alias.notes || '-'}</td>`;
+                            html += `<td style="padding: 8px; border: 1px solid #ddd; text-align: center;">`;
+                            html += `<button onclick="deleteAlias('${alias.receipt_name}')" style="background: #f44336; padding: 5px 10px; font-size: 12px;">🗑️ Delete</button>`;
+                            html += '</td></tr>';
+                        });
+
+                        html += '</table>';
+                        html += `<p style="margin-top: 10px; color: #666; font-size: 12px;">Total: ${data.count} aliases</p>`;
+                        aliasesDiv.innerHTML = html;
+                    } else {
+                        aliasesDiv.innerHTML = '<em>No aliases configured yet. Click "Add Alias" to create one.</em>';
+                    }
+                })
+                .catch(e => {
+                    aliasesDiv.innerHTML = `<span class="error">Error loading aliases: ${e.message}</span>`;
+                });
+        }
+
+        function showAddAliasForm() {
+            document.getElementById('addAliasForm').style.display = 'block';
+        }
+
+        function hideAddAliasForm() {
+            document.getElementById('addAliasForm').style.display = 'none';
+            // Clear form
+            document.getElementById('aliasReceiptName').value = '';
+            document.getElementById('aliasProductId').value = '';
+            document.getElementById('aliasProductName').value = '';
+            document.getElementById('aliasNotes').value = '';
+        }
+
+        function addAlias() {
+            const receiptName = document.getElementById('aliasReceiptName').value.trim();
+            const productId = parseInt(document.getElementById('aliasProductId').value);
+            const productName = document.getElementById('aliasProductName').value.trim();
+            const notes = document.getElementById('aliasNotes').value.trim();
+
+            if (!receiptName || !productId || !productName) {
+                alert('Please fill in all required fields (Receipt Name, Product ID, Product Name)');
+                return;
+            }
+
+            fetch(baseUrl + '/api/aliases', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    receipt_name: receiptName,
+                    grocy_product_id: productId,
+                    grocy_product_name: productName,
+                    notes: notes
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    alert('✅ ' + data.message);
+                    hideAddAliasForm();
+                    loadAliases();
+                } else {
+                    alert('❌ Error: ' + data.error);
+                }
+            })
+            .catch(e => {
+                alert('❌ Error adding alias: ' + e.message);
+            });
+        }
+
+        function deleteAlias(receiptName) {
+            if (!confirm(`Delete alias for "${receiptName}"?`)) {
+                return;
+            }
+
+            fetch(baseUrl + '/api/aliases/' + encodeURIComponent(receiptName), {
+                method: 'DELETE'
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    alert('✅ ' + data.message);
+                    loadAliases();
+                } else {
+                    alert('❌ Error: ' + data.error);
+                }
+            })
+            .catch(e => {
+                alert('❌ Error deleting alias: ' + e.message);
+            });
+        }
+
+        // Load aliases on page load
+        window.addEventListener('load', function() {
+            loadAliases();
+        });
     </script>
 </body>
 </html>
@@ -651,6 +810,88 @@ def process_paperless():
 
     except Exception as e:
         logger.error(f"Error processing Paperless receipts: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/aliases', methods=['GET'])
+def get_aliases():
+    """Get all product aliases."""
+    try:
+        aliases = alias_manager.list_all_aliases()
+        return jsonify({
+            'success': True,
+            'count': len(aliases),
+            'aliases': aliases
+        })
+    except Exception as e:
+        logger.error(f"Error getting aliases: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/aliases', methods=['POST'])
+def add_alias():
+    """Add a new product alias."""
+    try:
+        data = request.get_json()
+        if not data or 'receipt_name' not in data or 'grocy_product_id' not in data or 'grocy_product_name' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'Missing required fields: receipt_name, grocy_product_id, grocy_product_name'
+            }), 400
+
+        receipt_name = data['receipt_name']
+        grocy_product_id = int(data['grocy_product_id'])
+        grocy_product_name = data['grocy_product_name']
+        notes = data.get('notes', '')
+
+        success = alias_manager.add_alias(receipt_name, grocy_product_id, grocy_product_name, notes)
+
+        if success:
+            logger.info(f"Added alias: '{receipt_name}' → '{grocy_product_name}' (ID {grocy_product_id})")
+            return jsonify({
+                'success': True,
+                'message': f"Alias added: '{receipt_name}' → '{grocy_product_name}'"
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to add alias'
+            }), 500
+
+    except Exception as e:
+        logger.error(f"Error adding alias: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/aliases/<receipt_name>', methods=['DELETE'])
+def delete_alias(receipt_name):
+    """Delete a product alias by receipt name."""
+    try:
+        success = alias_manager.remove_alias(receipt_name)
+
+        if success:
+            logger.info(f"Deleted alias for '{receipt_name}'")
+            return jsonify({
+                'success': True,
+                'message': f"Alias deleted for '{receipt_name}'"
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': f"No alias found for '{receipt_name}'"
+            }), 404
+
+    except Exception as e:
+        logger.error(f"Error deleting alias: {e}", exc_info=True)
         return jsonify({
             'success': False,
             'error': str(e)

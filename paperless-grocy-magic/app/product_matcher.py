@@ -4,6 +4,7 @@ from typing import List, Optional, Tuple
 from fuzzywuzzy import fuzz
 from receipt_parser import ReceiptItem
 from grocy_client import GrocyProduct
+from alias_manager import AliasManager
 
 logger = logging.getLogger(__name__)
 
@@ -11,10 +12,11 @@ logger = logging.getLogger(__name__)
 class ProductMatch:
     """Represents a match between a receipt item and a Grocy product."""
 
-    def __init__(self, receipt_item: ReceiptItem, grocy_product: Optional[GrocyProduct], score: int):
+    def __init__(self, receipt_item: ReceiptItem, grocy_product: Optional[GrocyProduct], score: int, via_alias: bool = False):
         self.receipt_item = receipt_item
         self.grocy_product = grocy_product
         self.score = score  # 0-100
+        self.via_alias = via_alias  # True if matched via alias, False if via fuzzy matching
 
     @property
     def is_match(self) -> bool:
@@ -28,25 +30,29 @@ class ProductMatch:
 
     def __repr__(self):
         if self.is_match:
-            return f"Match({self.receipt_item.name} → {self.grocy_product.name}, score={self.score})"
+            match_type = "Alias" if self.via_alias else f"Fuzzy({self.score})"
+            return f"Match({self.receipt_item.name} → {self.grocy_product.name}, {match_type})"
         return f"NoMatch({self.receipt_item.name})"
 
 
 class ProductMatcher:
-    """Matches receipt items to Grocy products using fuzzy matching."""
+    """Matches receipt items to Grocy products using fuzzy matching and aliases."""
 
-    def __init__(self, threshold: float = 0.8):
+    def __init__(self, threshold: float = 0.8, alias_manager: Optional[AliasManager] = None):
         """
         Initialize matcher.
 
         Args:
             threshold: Matching threshold (0.0-1.0). Higher = more strict.
+            alias_manager: Optional AliasManager for exact name mappings.
         """
         self.threshold = int(threshold * 100)  # Convert to 0-100 scale
+        self.alias_manager = alias_manager
 
     def find_best_match(self, receipt_item: ReceiptItem, grocy_products: List[GrocyProduct]) -> ProductMatch:
         """
         Find the best matching Grocy product for a receipt item.
+        First checks aliases, then falls back to fuzzy matching.
 
         Args:
             receipt_item: Item from receipt
@@ -59,6 +65,20 @@ class ProductMatcher:
             logger.warning("No Grocy products available for matching")
             return ProductMatch(receipt_item, None, 0)
 
+        # Step 1: Check if alias exists for this receipt item
+        if self.alias_manager:
+            alias_result = self.alias_manager.find_grocy_product(receipt_item.name)
+            if alias_result:
+                product_id, product_name = alias_result
+                # Find the matching product in grocy_products list
+                for product in grocy_products:
+                    if product.id == product_id:
+                        logger.info(f"Alias match: '{receipt_item.name}' → '{product.name}' (ID {product_id})")
+                        return ProductMatch(receipt_item, product, 100, via_alias=True)
+                # Alias found but product not in list - log warning
+                logger.warning(f"Alias points to product ID {product_id} ('{product_name}') but product not found in Grocy")
+
+        # Step 2: Fall back to fuzzy matching
         best_product = None
         best_score = 0
 

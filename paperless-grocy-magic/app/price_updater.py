@@ -1,10 +1,11 @@
 """Service for updating Grocy prices from receipts."""
 import logging
-from typing import List, Dict
+from typing import List, Dict, Optional
 from datetime import datetime
 from receipt_parser import Receipt, parse_receipt
 from grocy_client import GrocyClient
 from product_matcher import ProductMatcher, ProductMatch
+from alias_manager import AliasManager
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,8 @@ class PriceUpdateResult:
                     'price': m.receipt_item.price,
                     'score': m.score,
                     'matched': m.is_match,
-                    'created': getattr(m, 'was_created', False)
+                    'created': getattr(m, 'was_created', False),
+                    'via_alias': m.via_alias
                 }
                 for m in self.matches
             ],
@@ -51,9 +53,9 @@ class PriceUpdateResult:
 class PriceUpdateService:
     """Service for processing receipts and updating Grocy prices."""
 
-    def __init__(self, grocy_client: GrocyClient, matcher_threshold: float = 0.8):
+    def __init__(self, grocy_client: GrocyClient, matcher_threshold: float = 0.8, alias_manager: Optional[AliasManager] = None):
         self.grocy = grocy_client
-        self.matcher = ProductMatcher(threshold=matcher_threshold)
+        self.matcher = ProductMatcher(threshold=matcher_threshold, alias_manager=alias_manager)
 
     def process_receipt_text(self, text: str, store_hint: str = None) -> PriceUpdateResult:
         """

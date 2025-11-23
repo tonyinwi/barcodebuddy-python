@@ -5,6 +5,53 @@ All notable changes to Paperless Grocy Magic will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0-beta] - 2025-11-23
+
+### Added
+- **🔗 Product Alias System** - Map receipt product names to Grocy products for exact matching!
+- New `AliasManager` module for managing product name mappings
+- Aliases bypass fuzzy matching for guaranteed accuracy
+- Case-insensitive alias matching
+- Persistent alias storage in `/data/product_aliases.json`
+- New API endpoints:
+  - `GET /api/aliases` - List all aliases
+  - `POST /api/aliases` - Add new alias
+  - `DELETE /api/aliases/<name>` - Remove alias
+- New UI section: "🔗 Product Aliases" with full management interface
+- Add aliases with receipt name → Grocy product ID/name mapping
+- Optional notes field for each alias
+- Visual table showing all configured aliases
+- One-click delete for aliases
+- Match results now show if matched via alias or fuzzy matching
+
+### Changed
+- `ProductMatcher` now checks aliases FIRST before fuzzy matching
+- `ProductMatch` includes `via_alias` flag to indicate match source
+- Receipt processing results show alias matches with ✅ indicator
+- `PriceUpdateService` accepts optional `AliasManager` parameter
+
+### How it works
+1. Parse receipt → Extract product name (e.g., "Vorderhaxe")
+2. **NEW:** Check if alias exists → If yes, use exact Grocy product (bypass fuzzy matching)
+3. If no alias → Fall back to fuzzy matching
+4. Update price or create product
+
+### Example Usage
+**Problem:** Receipt shows "SW-VORDERHAXE" but Grocy has "Schweinshaxe gegart"
+- Fuzzy matching score: 45% (too low, no match)
+
+**Solution:** Create alias
+- Receipt Name: `sw-vorderhaxe`
+- Grocy Product: `Schweinshaxe gegart` (ID 123)
+- Result: ✅ 100% match via alias!
+
+### Technical Details
+- Aliases stored as JSON array in `/data/product_aliases.json`
+- Receipt names normalized to lowercase for case-insensitive matching
+- Alias lookup happens before expensive fuzzy matching operations
+- Aliases persist across container restarts
+- Full CRUD operations via REST API
+
 ## [0.5.0-beta] - 2025-11-22
 
 ### Added
