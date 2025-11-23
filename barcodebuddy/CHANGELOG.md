@@ -5,6 +5,13 @@ All notable changes to Barcode Buddy (Python) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.18.2-beta] - 2025-11-23
+
+### Fixed
+- **"Namen ändern" button error** - Fixed "Error: Failed to update product name in Grocy"
+- Grocy API `update_product_name()` now sends complete product object (required by Grocy PUT API)
+- Previously only sent the `name` field, which Grocy rejected
+
 ## [2.18.1-beta] - 2025-11-23
 
 ### Fixed
