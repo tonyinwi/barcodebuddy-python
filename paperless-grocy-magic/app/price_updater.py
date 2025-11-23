@@ -111,6 +111,16 @@ class PriceUpdateService:
         for match in matched:
             product_id = match.grocy_product.id
             new_price = match.receipt_item.price
+            receipt_name = match.receipt_item.name.strip().lower()
+
+            # Check if this item has an OpenFoodFacts name in cross-table
+            display_name = match.grocy_product.name
+            if self.matcher.alias_manager:
+                existing_alias = self.matcher.alias_manager.get_alias(receipt_name)
+                if existing_alias and existing_alias.openfood_name:
+                    # Use OpenFoodFacts name for display (cross-table enhancement)
+                    display_name = existing_alias.openfood_name
+                    logger.debug(f"📝 Using OpenFood name '{display_name}' for '{receipt_name}'")
 
             # Update price
             success, error = self.grocy.update_product_price(
@@ -129,11 +139,10 @@ class PriceUpdateService:
 
                 if stock_success:
                     result.updated_count += 1
-                    logger.info(f"✅ Updated & added to stock: {match.grocy_product.name} → {new_price:.2f}€")
+                    logger.info(f"✅ Updated & added to stock: {display_name} → {new_price:.2f}€")
 
                     # Auto-create alias for future matching
                     if self.matcher.alias_manager:
-                        receipt_name = match.receipt_item.name.strip().lower()
                         existing_alias = self.matcher.alias_manager.get_alias(receipt_name)
 
                         if not existing_alias:
@@ -149,12 +158,12 @@ class PriceUpdateService:
                                 logger.info(f"   🔗 Auto-created alias: '{receipt_name}' → {match.grocy_product.name}")
                 else:
                     result.failed_count += 1
-                    error_msg = f"Updated {match.grocy_product.name} but failed to add to stock: {stock_error}"
+                    error_msg = f"Updated {display_name} but failed to add to stock: {stock_error}"
                     result.errors.append(error_msg)
                     logger.error(f"⚠️  {error_msg}")
             else:
                 result.failed_count += 1
-                error_msg = f"Failed to update {match.grocy_product.name}: {error}"
+                error_msg = f"Failed to update {display_name}: {error}"
                 result.errors.append(error_msg)
                 logger.error(f"❌ {error_msg}")
 
