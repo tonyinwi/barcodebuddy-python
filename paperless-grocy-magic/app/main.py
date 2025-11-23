@@ -204,6 +204,11 @@ Datum: 22.11.2025</textarea>
                 <input type="text" id="aliasProductName" placeholder="e.g., Schweinshaxe gegart" style="width: 100%; padding: 8px; margin-top: 5px;">
             </div>
             <div style="margin: 10px 0;">
+                <label><strong>Barcodes (optional):</strong></label><br>
+                <input type="text" id="aliasBarcodes" placeholder="e.g., 4012345678901, 4012345678902" style="width: 100%; padding: 8px; margin-top: 5px;">
+                <small style="color: #666; font-size: 11px;">Comma-separated for multiple barcodes</small>
+            </div>
+            <div style="margin: 10px 0;">
                 <label><strong>Notes (optional):</strong></label><br>
                 <input type="text" id="aliasNotes" placeholder="Optional notes" style="width: 100%; padding: 8px; margin-top: 5px;">
             </div>
@@ -442,6 +447,7 @@ Datum: 22.11.2025</textarea>
                         html += '<tr style="background: #f0f0f0; font-weight: bold;">';
                         html += '<th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Receipt Name</th>';
                         html += '<th style="padding: 8px; text-align: left; border: 1px solid #ddd;">→ Grocy Product</th>';
+                        html += '<th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Barcodes</th>';
                         html += '<th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Notes</th>';
                         html += '<th style="padding: 8px; text-align: center; border: 1px solid #ddd;">Action</th>';
                         html += '</tr>';
@@ -450,6 +456,13 @@ Datum: 22.11.2025</textarea>
                             html += '<tr>';
                             html += `<td style="padding: 8px; border: 1px solid #ddd;"><strong>${alias.receipt_name}</strong></td>`;
                             html += `<td style="padding: 8px; border: 1px solid #ddd;">${alias.grocy_product_name} <span style="color: #999;">(ID ${alias.grocy_product_id})</span></td>`;
+
+                            // Display barcodes
+                            const barcodes = alias.barcodes && alias.barcodes.length > 0
+                                ? alias.barcodes.join(', ')
+                                : '-';
+                            html += `<td style="padding: 8px; border: 1px solid #ddd; font-size: 11px; font-family: monospace;">${barcodes}</td>`;
+
                             html += `<td style="padding: 8px; border: 1px solid #ddd; font-size: 12px; color: #666;">${alias.notes || '-'}</td>`;
                             html += `<td style="padding: 8px; border: 1px solid #ddd; text-align: center;">`;
                             html += `<button onclick="deleteAlias('${alias.receipt_name}')" style="background: #f44336; padding: 5px 10px; font-size: 12px;">🗑️ Delete</button>`;
@@ -478,6 +491,7 @@ Datum: 22.11.2025</textarea>
             document.getElementById('aliasReceiptName').value = '';
             document.getElementById('aliasProductId').value = '';
             document.getElementById('aliasProductName').value = '';
+            document.getElementById('aliasBarcodes').value = '';
             document.getElementById('aliasNotes').value = '';
         }
 
@@ -485,6 +499,7 @@ Datum: 22.11.2025</textarea>
             const receiptName = document.getElementById('aliasReceiptName').value.trim();
             const productId = parseInt(document.getElementById('aliasProductId').value);
             const productName = document.getElementById('aliasProductName').value.trim();
+            const barcodes = document.getElementById('aliasBarcodes').value.trim();
             const notes = document.getElementById('aliasNotes').value.trim();
 
             if (!receiptName || !productId || !productName) {
@@ -499,6 +514,7 @@ Datum: 22.11.2025</textarea>
                     receipt_name: receiptName,
                     grocy_product_id: productId,
                     grocy_product_name: productName,
+                    barcodes: barcodes,
                     notes: notes
                 })
             })
@@ -874,9 +890,14 @@ def add_alias():
         receipt_name = data['receipt_name']
         grocy_product_id = int(data['grocy_product_id'])
         grocy_product_name = data['grocy_product_name']
+        barcodes = data.get('barcodes', [])
         notes = data.get('notes', '')
 
-        success = alias_manager.add_alias(receipt_name, grocy_product_id, grocy_product_name, notes)
+        # Parse barcodes if provided as comma-separated string
+        if isinstance(barcodes, str):
+            barcodes = [b.strip() for b in barcodes.split(',') if b.strip()]
+
+        success = alias_manager.add_alias(receipt_name, grocy_product_id, grocy_product_name, barcodes, notes)
 
         if success:
             logger.info(f"Added alias: '{receipt_name}' → '{grocy_product_name}' (ID {grocy_product_id})")
@@ -918,6 +939,33 @@ def delete_alias(receipt_name):
 
     except Exception as e:
         logger.error(f"Error deleting alias: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/aliases/barcode/<barcode>', methods=['GET'])
+def find_alias_by_barcode(barcode):
+    """Find alias by barcode."""
+    try:
+        alias = alias_manager.find_by_barcode(barcode)
+
+        if alias:
+            return jsonify({
+                'success': True,
+                'found': True,
+                'alias': alias.to_dict()
+            })
+        else:
+            return jsonify({
+                'success': True,
+                'found': False,
+                'message': f"No alias found for barcode '{barcode}'"
+            })
+
+    except Exception as e:
+        logger.error(f"Error finding alias by barcode: {e}", exc_info=True)
         return jsonify({
             'success': False,
             'error': str(e)

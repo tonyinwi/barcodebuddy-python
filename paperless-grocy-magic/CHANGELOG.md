@@ -5,6 +5,73 @@ All notable changes to Paperless Grocy Magic will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2-beta] - 2025-11-23
+
+### Added
+- **📱 Barcode Support for Aliases** - Store barcodes with product aliases for barcode scanner integration!
+- New `barcodes` field in ProductAlias (list of barcodes)
+- `find_by_barcode()` method in AliasManager - find product by barcode
+- `add_barcode_to_alias()` method - add barcode to existing alias
+- New API endpoint: `GET /api/aliases/barcode/<barcode>` - find alias by barcode
+- UI now displays barcodes column in alias table
+- UI form accepts comma-separated barcodes input
+- Automatic barcode parsing from comma-separated strings
+
+### Changed
+- `ProductAlias` class now accepts optional `barcodes` parameter
+- `AliasManager.add_alias()` now accepts optional `barcodes` parameter
+- API `/api/aliases` POST accepts `barcodes` field (array or comma-separated string)
+- Alias table shows barcodes in monospace font for better readability
+
+### Use Cases
+1. **Barcode Scanner Integration**:
+   - Barcode scanner can query `/api/aliases/barcode/4012345678901`
+   - Returns matching Grocy product ID and name
+   - Enables unified product identification across receipt processing and barcode scanning
+
+2. **Manual Barcode Entry**:
+   - Add barcodes when creating aliases in UI
+   - Multiple barcodes per product supported
+   - Format: "4012345678901, 4012345678902"
+
+3. **Multi-Add-on Workflow**:
+   - Receipt: "SW-VORDERHAXE" → Alias → Grocy Product ID 123
+   - Barcode: "4012345678901" → Alias → Grocy Product ID 123
+   - Both systems use same Grocy product!
+
+### Example Workflow
+```yaml
+# Step 1: Create alias with barcode
+Receipt Name: sw-vorderhaxe
+Grocy Product ID: 123
+Grocy Product Name: Schweinshaxe gegart
+Barcodes: 4012345678901
+→ Saved to /share/paperless-grocy-magic/product_aliases.json
+
+# Step 2: Barcode Scanner queries
+GET /api/aliases/barcode/4012345678901
+→ Returns: {grocy_product_id: 123, grocy_product_name: "Schweinshaxe gegart"}
+
+# Step 3: Both systems use Product ID 123
+✅ Receipt processing: Matches "SW-VORDERHAXE" → Product 123
+✅ Barcode scanning: Matches "4012345678901" → Product 123
+```
+
+### JSON Structure
+```json
+{
+  "aliases": [
+    {
+      "receipt_name": "sw-vorderhaxe",
+      "grocy_product_id": 123,
+      "grocy_product_name": "Schweinshaxe gegart",
+      "barcodes": ["4012345678901", "4012345678902"],
+      "notes": "REWE Produkt"
+    }
+  ]
+}
+```
+
 ## [0.6.1-beta] - 2025-11-23
 
 ### Added

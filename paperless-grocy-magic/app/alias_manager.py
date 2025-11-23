@@ -10,10 +10,12 @@ logger = logging.getLogger(__name__)
 class ProductAlias:
     """Represents a mapping from receipt product name to Grocy product."""
 
-    def __init__(self, receipt_name: str, grocy_product_id: int, grocy_product_name: str, notes: str = ""):
+    def __init__(self, receipt_name: str, grocy_product_id: int, grocy_product_name: str,
+                 barcodes: List[str] = None, notes: str = ""):
         self.receipt_name = receipt_name.strip().lower()  # Normalize for matching
         self.grocy_product_id = grocy_product_id
         self.grocy_product_name = grocy_product_name
+        self.barcodes = barcodes or []  # List of barcodes for this product
         self.notes = notes
 
     def to_dict(self) -> dict:
@@ -22,6 +24,7 @@ class ProductAlias:
             'receipt_name': self.receipt_name,
             'grocy_product_id': self.grocy_product_id,
             'grocy_product_name': self.grocy_product_name,
+            'barcodes': self.barcodes,
             'notes': self.notes
         }
 
@@ -32,6 +35,7 @@ class ProductAlias:
             receipt_name=data['receipt_name'],
             grocy_product_id=data['grocy_product_id'],
             grocy_product_name=data['grocy_product_name'],
+            barcodes=data.get('barcodes', []),
             notes=data.get('notes', '')
         )
 
@@ -77,13 +81,15 @@ class AliasManager:
         except Exception as e:
             logger.error(f"Error saving aliases: {e}")
 
-    def add_alias(self, receipt_name: str, grocy_product_id: int, grocy_product_name: str, notes: str = "") -> bool:
+    def add_alias(self, receipt_name: str, grocy_product_id: int, grocy_product_name: str,
+                  barcodes: List[str] = None, notes: str = "") -> bool:
         """Add or update an alias."""
         try:
-            alias = ProductAlias(receipt_name, grocy_product_id, grocy_product_name, notes)
+            alias = ProductAlias(receipt_name, grocy_product_id, grocy_product_name, barcodes, notes)
             self.aliases[alias.receipt_name] = alias
             self._save_aliases()
-            logger.info(f"Added alias: '{receipt_name}' → '{grocy_product_name}' (ID {grocy_product_id})")
+            barcode_info = f" with {len(alias.barcodes)} barcode(s)" if alias.barcodes else ""
+            logger.info(f"Added alias: '{receipt_name}' → '{grocy_product_name}' (ID {grocy_product_id}){barcode_info}")
             return True
         except Exception as e:
             logger.error(f"Error adding alias: {e}")
@@ -119,6 +125,42 @@ class AliasManager:
         if alias:
             return (alias.grocy_product_id, alias.grocy_product_name)
         return None
+
+    def find_by_barcode(self, barcode: str) -> Optional[ProductAlias]:
+        """
+        Find alias by barcode.
+        Returns ProductAlias or None if no alias has this barcode.
+        """
+        barcode = barcode.strip()
+        for alias in self.aliases.values():
+            if barcode in alias.barcodes:
+                logger.info(f"Found alias by barcode '{barcode}': {alias.grocy_product_name} (ID {alias.grocy_product_id})")
+                return alias
+        return None
+
+    def add_barcode_to_alias(self, receipt_name: str, barcode: str) -> bool:
+        """
+        Add a barcode to an existing alias.
+        Returns True if successful, False if alias not found or error.
+        """
+        try:
+            alias = self.get_alias(receipt_name)
+            if not alias:
+                logger.warning(f"Cannot add barcode: alias '{receipt_name}' not found")
+                return False
+
+            barcode = barcode.strip()
+            if barcode not in alias.barcodes:
+                alias.barcodes.append(barcode)
+                self._save_aliases()
+                logger.info(f"Added barcode '{barcode}' to alias '{receipt_name}'")
+                return True
+            else:
+                logger.warning(f"Barcode '{barcode}' already exists for alias '{receipt_name}'")
+                return False
+        except Exception as e:
+            logger.error(f"Error adding barcode to alias: {e}")
+            return False
 
     def list_all_aliases(self) -> List[dict]:
         """Get all aliases as list of dictionaries."""
