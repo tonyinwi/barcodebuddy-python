@@ -5,6 +5,13 @@ All notable changes to Barcode Buddy (Python) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.18.1-beta] - 2025-11-23
+
+### Fixed
+- **Empty product dropdown** when scanning barcodes after receipt processing
+- API filter logic now correctly includes Grocy products when `without_barcode=true`
+- Previously all Grocy products were incorrectly skipped when filtering for products without barcodes
+
 ## [2.18.0-beta] - 2025-11-23
 
 ### Added
