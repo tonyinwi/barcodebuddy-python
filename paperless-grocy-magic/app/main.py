@@ -988,6 +988,112 @@ def find_alias_by_barcode(barcode):
         }), 500
 
 
+@app.route('/api/aliases/<receipt_name>/barcode', methods=['PUT'])
+def add_barcode_to_alias(receipt_name):
+    """Add a barcode to an existing alias."""
+    try:
+        data = request.get_json()
+        if not data or 'barcode' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'Missing required field: barcode'
+            }), 400
+
+        barcode = data['barcode'].strip()
+
+        if not barcode:
+            return jsonify({
+                'success': False,
+                'error': 'Barcode cannot be empty'
+            }), 400
+
+        # Check if alias exists
+        alias = alias_manager.get_alias(receipt_name)
+        if not alias:
+            return jsonify({
+                'success': False,
+                'error': f"Alias '{receipt_name}' not found"
+            }), 404
+
+        # Check if barcode already exists for this alias
+        if barcode in alias.barcodes:
+            return jsonify({
+                'success': True,
+                'message': f"Barcode '{barcode}' already exists for alias '{receipt_name}'",
+                'alias': alias.to_dict()
+            })
+
+        # Check if barcode is already used by another alias
+        existing_alias = alias_manager.find_by_barcode(barcode)
+        if existing_alias and existing_alias.receipt_name != receipt_name:
+            return jsonify({
+                'success': False,
+                'error': f"Barcode '{barcode}' is already used by alias '{existing_alias.receipt_name}' (Grocy product: {existing_alias.grocy_product_name})"
+            }), 409
+
+        # Add barcode to alias
+        success = alias_manager.add_barcode_to_alias(receipt_name, barcode)
+
+        if success:
+            updated_alias = alias_manager.get_alias(receipt_name)
+            logger.info(f"Added barcode '{barcode}' to alias '{receipt_name}'")
+            return jsonify({
+                'success': True,
+                'message': f"Barcode '{barcode}' added to alias '{receipt_name}'",
+                'alias': updated_alias.to_dict()
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to add barcode'
+            }), 500
+
+    except Exception as e:
+        logger.error(f"Error adding barcode to alias: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/aliases/<receipt_name>/barcode/<barcode>', methods=['DELETE'])
+def remove_barcode_from_alias(receipt_name, barcode):
+    """Remove a barcode from an alias."""
+    try:
+        # Check if alias exists
+        alias = alias_manager.get_alias(receipt_name)
+        if not alias:
+            return jsonify({
+                'success': False,
+                'error': f"Alias '{receipt_name}' not found"
+            }), 404
+
+        # Check if barcode exists in this alias
+        if barcode not in alias.barcodes:
+            return jsonify({
+                'success': False,
+                'error': f"Barcode '{barcode}' not found in alias '{receipt_name}'"
+            }), 404
+
+        # Remove barcode
+        alias.barcodes.remove(barcode)
+        alias_manager._save_aliases()
+
+        logger.info(f"Removed barcode '{barcode}' from alias '{receipt_name}'")
+        return jsonify({
+            'success': True,
+            'message': f"Barcode '{barcode}' removed from alias '{receipt_name}'",
+            'alias': alias.to_dict()
+        })
+
+    except Exception as e:
+        logger.error(f"Error removing barcode from alias: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 if __name__ == '__main__':
     logger.info("🪄 Paperless Grocy Magic starting...")
     logger.info(f"Paperless: {'✓' if config.paperless_url else '✗'}")

@@ -5,6 +5,50 @@ All notable changes to Paperless Grocy Magic will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.8-beta] - 2025-11-23
+
+### Added
+- **📱 Barcode Scanner Integration API** - New endpoints for Barcode Scanner Add-on
+- `PUT /api/aliases/<receipt_name>/barcode` - Add barcode to existing alias
+- `DELETE /api/aliases/<receipt_name>/barcode/<barcode>` - Remove barcode from alias
+- Comprehensive API documentation in `API.md`
+- Barcode conflict detection (prevents same barcode on multiple products)
+- Support for shared alias storage between add-ons
+
+### API Features
+**Add Barcode:**
+- Checks if alias exists (404 if not)
+- Checks if barcode already exists (returns success)
+- Checks if barcode used by another alias (409 conflict)
+- Logs barcode additions
+
+**Remove Barcode:**
+- Validates alias and barcode existence
+- Safely removes barcode from list
+- Returns updated alias
+
+### Workflow Support
+Enables Barcode Scanner Add-on to:
+1. Scan barcode → Find product via `/api/aliases/barcode/<barcode>`
+2. If found → Use Grocy product ID directly
+3. If not found → Let user select product → Add barcode to alias
+4. Next scan → Automatically recognized!
+
+### Documentation
+Created `API.md` with:
+- All API endpoints and request/response formats
+- Complete workflow examples for 3 scenarios
+- Python client example code
+- Curl command examples
+- Error code reference
+- Shared storage integration guide
+
+### Integration Benefits
+- Auto-created aliases from receipts can be enhanced with barcodes
+- Barcode Scanner and Receipt Processing share the same product mappings
+- Single source of truth in `/share/paperless-grocy-magic/product_aliases.json`
+- Products scanned via barcode map to same Grocy products as receipt items
+
 ## [0.6.7-beta] - 2025-11-23
 
 ### Fixed
