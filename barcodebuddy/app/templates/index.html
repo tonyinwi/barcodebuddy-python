@@ -136,6 +136,69 @@
             margin-top: 20px;
         }
 
+        .pending-item {
+            background: #fef3c7;
+            border: 2px solid #f59e0b;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+
+        .pending-barcode {
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+            color: #d97706;
+            font-size: 18px;
+        }
+
+        .pending-details {
+            margin: 10px 0;
+            color: #78716c;
+        }
+
+        .product-select {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 14px;
+            margin: 10px 0;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .btn-use-existing {
+            flex: 1;
+            background: #10b981;
+        }
+
+        .btn-use-existing:hover {
+            background: #059669;
+        }
+
+        .btn-create-new {
+            flex: 1;
+            background: #3b82f6;
+        }
+
+        .btn-create-new:hover {
+            background: #2563eb;
+        }
+
+        .pending-badge {
+            background: #f59e0b;
+            color: white;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+
     </style>
 </head>
 <body>
@@ -179,6 +242,14 @@
             </div>
         </div>
 
+        <div class="card" id="pending-card" style="display: none;">
+            <h2>⏸️ {{ _('pending_barcodes') }}<span class="pending-badge" id="pending-count">0</span></h2>
+            <p style="color: #78716c; margin-bottom: 15px;">{{ _('pending_barcodes_description') }}</p>
+            <div id="pending-list">
+                <!-- Pending items will be dynamically inserted here -->
+            </div>
+        </div>
+
         <div class="card">
             <h2>📋 {{ _('recent_scans') }}</h2>
             <div class="scan-list" id="scan-list">
@@ -199,11 +270,195 @@
             error: "{{ _('error') }}",
             failed_to_create: "{{ _('failed_to_create') }}",
             network_error: "{{ _('network_error') }}",
-            no_scans_yet: "{{ _('no_scans_yet') }}"
+            no_scans_yet: "{{ _('no_scans_yet') }}",
+            select_product: "Select existing product...",
+            use_existing: "Use Existing",
+            create_new: "Create New",
+            processing: "Processing...",
+            resolved: "Resolved!",
+            select_product_first: "Please select a product first"
         };
+
+        // Cache for available products
+        let availableProducts = null;
 
         function downloadQuantityBarcodes() {
             window.open('api/download-quantity-barcodes', '_blank');
+        }
+
+        function loadPending() {
+            fetch('api/pending')
+                .then(response => response.json())
+                .then(data => {
+                    if (!data.success) return;
+
+                    const pendingCard = document.getElementById('pending-card');
+                    const pendingList = document.getElementById('pending-list');
+                    const pendingCount = document.getElementById('pending-count');
+
+                    if (data.count === 0) {
+                        pendingCard.style.display = 'none';
+                        return;
+                    }
+
+                    pendingCard.style.display = 'block';
+                    pendingCount.textContent = data.count;
+
+                    pendingList.innerHTML = data.pending.map((item, index) => `
+                        <div class="pending-item">
+                            <div>
+                                <span style="font-size: 24px; margin-right: 10px;">⏸️</span>
+                                <span class="pending-barcode">${item.barcode}</span>
+                            </div>
+                            <div class="pending-details">
+                                <strong>Found in ${item.database}:</strong> ${item.product_name}
+                                <br>
+                                <strong>Mode:</strong> ${item.mode} | <strong>Quantity:</strong> ${item.quantity}
+                            </div>
+                            <select class="product-select" id="product-select-${index}">
+                                <option value="">${translations.select_product}</option>
+                            </select>
+                            <div class="button-group">
+                                <button class="btn-use-existing" onclick="resolveWithExisting(${index}, '${item.barcode}')">
+                                    ✓ ${translations.use_existing}
+                                </button>
+                                <button class="btn-create-new" onclick="resolveWithNew(${index}, '${item.barcode}')">
+                                    ➕ ${translations.create_new}
+                                </button>
+                            </div>
+                        </div>
+                    `).join('');
+
+                    // Load available products for each select
+                    loadAvailableProducts();
+                })
+                .catch(error => console.error('Load pending error:', error));
+        }
+
+        function loadAvailableProducts() {
+            // Only load once and cache
+            if (availableProducts) {
+                populateSelects();
+                return;
+            }
+
+            fetch('api/available-products')
+                .then(response => response.json())
+                .then(data => {
+                    if (!data.success) return;
+                    availableProducts = data.products;
+                    populateSelects();
+                })
+                .catch(error => console.error('Load available products error:', error));
+        }
+
+        function populateSelects() {
+            const selects = document.querySelectorAll('[id^="product-select-"]');
+            selects.forEach(select => {
+                const currentValue = select.value;
+
+                // Group by source
+                const aliasProducts = availableProducts.filter(p => p.source === 'alias');
+                const grocyProducts = availableProducts.filter(p => p.source === 'grocy');
+
+                let options = `<option value="">${translations.select_product}</option>`;
+
+                if (aliasProducts.length > 0) {
+                    options += '<optgroup label="From Aliases (Receipt Names)">';
+                    aliasProducts.forEach(p => {
+                        options += `<option value="${p.id}">${p.name} (${p.alias_name})</option>`;
+                    });
+                    options += '</optgroup>';
+                }
+
+                if (grocyProducts.length > 0) {
+                    options += '<optgroup label="From Grocy">';
+                    grocyProducts.forEach(p => {
+                        options += `<option value="${p.id}">${p.name}</option>`;
+                    });
+                    options += '</optgroup>';
+                }
+
+                select.innerHTML = options;
+                select.value = currentValue;
+            });
+        }
+
+        function resolveWithExisting(index, barcode) {
+            const select = document.getElementById(`product-select-${index}`);
+            const productId = select.value;
+
+            if (!productId) {
+                alert(translations.select_product_first);
+                return;
+            }
+
+            // Disable buttons
+            const buttons = document.querySelectorAll(`#pending-list .pending-item:nth-child(${index + 1}) button`);
+            buttons.forEach(btn => {
+                btn.disabled = true;
+                btn.textContent = translations.processing;
+            });
+
+            fetch('api/pending/resolve', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    barcode: barcode,
+                    action: 'use_existing',
+                    product_id: productId
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    loadPending();  // Refresh pending list
+                    loadScans();    // Refresh scans to show result
+                    availableProducts = null;  // Clear cache
+                } else {
+                    alert(`${translations.error}: ${data.error}`);
+                    buttons.forEach(btn => btn.disabled = false);
+                }
+            })
+            .catch(error => {
+                console.error('Resolve error:', error);
+                alert(translations.network_error);
+                buttons.forEach(btn => btn.disabled = false);
+            });
+        }
+
+        function resolveWithNew(index, barcode) {
+            // Disable buttons
+            const buttons = document.querySelectorAll(`#pending-list .pending-item:nth-child(${index + 1}) button`);
+            buttons.forEach(btn => {
+                btn.disabled = true;
+                btn.textContent = translations.processing;
+            });
+
+            fetch('api/pending/resolve', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    barcode: barcode,
+                    action: 'create_new'
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    loadPending();  // Refresh pending list
+                    loadScans();    // Refresh scans to show result
+                    availableProducts = null;  // Clear cache
+                } else {
+                    alert(`${translations.error}: ${data.error}`);
+                    buttons.forEach(btn => btn.disabled = false);
+                }
+            })
+            .catch(error => {
+                console.error('Resolve error:', error);
+                alert(translations.network_error);
+                buttons.forEach(btn => btn.disabled = false);
+            });
         }
 
         function submitBarcode() {
@@ -305,6 +560,7 @@
                         const emoji = scan.status === 'success' ? '✅' :
                                     scan.status === 'error' ? '❌' :
                                     scan.status === 'not_found' ? '❓' :
+                                    scan.status === 'pending' ? '⏸️' :
                                     scan.status === 'quantity' ? '🔢' :
                                     scan.status === 'mode' ? '🔄' : '📦';
 
@@ -354,9 +610,15 @@
                 }
             });
 
-            // Auto-refresh scans every 2 seconds
-            setInterval(loadScans, 2000);
+            // Auto-refresh scans and pending every 2 seconds
+            setInterval(() => {
+                loadScans();
+                loadPending();
+            }, 2000);
+
+            // Initial load
             loadScans();
+            loadPending();
 
             console.log('submitBarcode function available:', typeof submitBarcode);
         });
