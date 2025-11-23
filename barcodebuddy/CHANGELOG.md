@@ -5,6 +5,94 @@ All notable changes to Barcode Buddy (Python) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.15.0-beta] - 2025-11-23
+
+### Added
+- **⏸️ Pending Barcodes System** - Manual product selection to prevent duplicates!
+- When OpenFoodFacts/UPC finds a product, it's added to "pending" instead of auto-creating
+- User can choose: Use existing product OR create new product
+- New API endpoints for pending barcode management
+
+### Problem Solved
+**Before:** Receipt creates "senfk" → Scan barcode → OpenFoodFacts finds "Senfkörner" → Creates DUPLICATE product
+
+**After:** Receipt creates "senfk" → Scan barcode → OpenFoodFacts finds "Senfkörner" → **Pending (User chooses)** → User selects existing "senfk" → No duplicate!
+
+### How It Works
+1. Scan barcode 4012345678901
+2. Not in Grocy barcode DB
+3. Not in aliases (barcode not linked yet)
+4. OpenFoodFacts finds "Senfkörner"
+5. **NEW:** Added to pending list (not auto-created!)
+6. Scanner shows: "⏸️ Found in OpenFoodFacts: Senfkörner - Check UI"
+7. User opens UI → Sees pending barcode
+8. User chooses:
+   - **Option A:** Use existing "senfk" (ID 123) → Barcode added to product
+   - **Option B:** Create new "Senfkörner" (ID 124)
+9. Product added to stock ✅
+
+### New API Endpoints
+- `GET /api/pending` - Get all pending barcodes
+- `GET /api/available-products` - Get products from aliases + Grocy
+- `POST /api/pending/resolve` - Resolve pending (use_existing or create_new)
+
+### Workflow Example
+```json
+// GET /api/pending
+{
+  "pending": [{
+    "barcode": "4012345678901",
+    "product_name": "Senfkörner",
+    "database": "OpenFoodFacts",
+    "quantity": 1.0,
+    "mode": "add"
+  }]
+}
+
+// GET /api/available-products
+{
+  "products": [{
+    "id": 123,
+    "name": "senfk",
+    "source": "alias",
+    "alias_name": "senfk"
+  }]
+}
+
+// POST /api/pending/resolve
+{
+  "barcode": "4012345678901",
+  "action": "use_existing",
+  "product_id": 123
+}
+→ Adds barcode to "senfk", adds to stock, removes from pending
+```
+
+### Prevent Duplicates
+- Receipts create aliases automatically
+- Barcode scanning finds product in external DB
+- Instead of auto-creating duplicate → User selects existing
+- Barcode gets linked to existing product
+- Next scan → Found via Grocy barcode DB ✅
+
+### Technical Details
+- Pending barcodes stored in memory (resets on restart)
+- Limited to 20 pending items
+- Includes quantity and mode (add/consume) from scan
+- Gracefully handles products from both aliases and Grocy
+
+### UI Integration (TODO)
+Current implementation has API backend ready. UI needs to be extended to show:
+- Pending barcodes section
+- Product selection dropdown
+- "Use Existing" / "Create New" buttons
+
+### Files Modified
+- `app/main.py` - Pending system + 3 new API endpoints
+- `app/config.yaml` - Version 2.15.0-beta
+- `app/__init__.py` - Version 2.15.0-beta
+- `run.sh` - Version 2.15.0-beta
+
 ## [2.14.0-beta] - 2025-11-23
 
 ### Added

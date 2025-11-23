@@ -78,6 +78,9 @@ upcdatabase_client = UPCDatabaseClient()
 # Store recent scans
 recent_scans = []
 
+# Store pending barcodes (waiting for user decision)
+pending_barcodes = []
+
 # Current quantity for next product scan (reset after each product)
 # Starts at 0, defaults to 1 if no quantity barcode scanned
 current_quantity = 0.0
@@ -259,42 +262,35 @@ def handle_barcode(barcode: str):
                         database_name = "UPC Database"
 
                 if external_product:
-                    # Step 4: Found in external database - create in Grocy
+                    # Step 4: Found in external database - add to pending for user decision
                     product_name = external_product['name']
-                    description = f"{external_product.get('brand', '')} - {external_product.get('quantity', '')}".strip(' -')
 
-                    logger.info(f"🆕 Creating new product from {database_name}: {product_name}")
-                    product_id = grocy_client.create_product(product_name, description)
+                    # Check if this barcode is already pending
+                    already_pending = any(p['barcode'] == barcode for p in pending_barcodes)
 
-                    if product_id:
-                        # Step 5: Add barcode to new product
-                        if grocy_client.add_barcode_to_product(product_id, barcode):
-                            # Step 6: Add to stock with current quantity (only makes sense in add mode)
-                            amount = current_quantity if current_quantity > 0 else 1.0
+                    if not already_pending:
+                        pending_item = {
+                            'barcode': barcode,
+                            'product_name': product_name,
+                            'database': database_name,
+                            'external_data': external_product,
+                            'timestamp': datetime.now().isoformat(),
+                            'quantity': current_quantity if current_quantity > 0 else 1.0,
+                            'mode': current_mode
+                        }
+                        pending_barcodes.insert(0, pending_item)
 
-                            if current_mode == 'add':
-                                success = grocy_client.add_product(product_id, amount)
-                                action_text = "Added"
-                            else:
-                                # Note: Consuming a just-created product is unusual, but supported
-                                success = grocy_client.consume_product(product_id, amount)
-                                action_text = "Removed"
+                        # Keep only last 20 pending items
+                        if len(pending_barcodes) > 20:
+                            pending_barcodes.pop()
 
-                            if success:
-                                quantity_text = f" ({amount}x)" if amount != 1 else ""
-                                scan_result['status'] = 'success'
-                                scan_result['message'] = f"🆕 Created from {database_name} & {action_text}: {product_name}{quantity_text}"
-                                logger.info(f"🆕 Successfully created from {database_name} and {action_text.lower()}: {product_name} (quantity: {amount})")
-                                current_quantity = 0.0  # Reset after successful operation
-                            else:
-                                scan_result['status'] = 'warning'
-                                scan_result['message'] = f"⚠️ Created {product_name}, but failed to {action_text.lower()}"
-                        else:
-                            scan_result['status'] = 'warning'
-                            scan_result['message'] = f"⚠️ Created {product_name}, but failed to add barcode"
+                        logger.info(f"⏸️  Found '{product_name}' in {database_name} - added to pending (waiting for user decision)")
+                        scan_result['status'] = 'pending'
+                        scan_result['message'] = f"⏸️  Found in {database_name}: {product_name} - Check UI to select product"
+                        current_quantity = 0.0  # Reset after adding to pending
                     else:
-                        scan_result['status'] = 'error'
-                        scan_result['message'] = f"❌ Failed to create product in Grocy"
+                        scan_result['status'] = 'pending'
+                        scan_result['message'] = f"⏸️  Already pending: {product_name}"
                 else:
                     # Not found anywhere
                     scan_result['status'] = 'not_found'
@@ -423,6 +419,177 @@ def download_quantity_barcodes():
         )
     except Exception as e:
         logger.error(f"Error generating PDF: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/pending')
+def get_pending():
+    """Get pending barcodes waiting for user decision."""
+    return jsonify({
+        'success': True,
+        'pending': pending_barcodes,
+        'count': len(pending_barcodes)
+    })
+
+@app.route('/api/available-products')
+def get_available_products():
+    """Get available products from aliases and Grocy."""
+    try:
+        products = []
+
+        # Get products from aliases if available
+        if alias_client:
+            aliases = alias_client.get_all_aliases()
+            if aliases:
+                for alias in aliases:
+                    products.append({
+                        'source': 'alias',
+                        'id': alias['grocy_product_id'],
+                        'name': alias['grocy_product_name'],
+                        'alias_name': alias['receipt_name'],
+                        'barcodes': alias.get('barcodes', [])
+                    })
+
+        # Also get all products from Grocy
+        if grocy_client:
+            grocy_products = grocy_client.get_all_products()
+            if grocy_products:
+                # Add products that aren't already in aliases
+                alias_product_ids = {p['id'] for p in products}
+                for gp in grocy_products:
+                    if gp['id'] not in alias_product_ids:
+                        products.append({
+                            'source': 'grocy',
+                            'id': gp['id'],
+                            'name': gp.get('name', 'Unknown'),
+                            'alias_name': None,
+                            'barcodes': []
+                        })
+
+        # Sort by name
+        products.sort(key=lambda x: x['name'].lower())
+
+        return jsonify({
+            'success': True,
+            'products': products,
+            'count': len(products)
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching available products: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/pending/resolve', methods=['POST'])
+def resolve_pending():
+    """Resolve a pending barcode - use existing product or create new."""
+    global pending_barcodes
+
+    try:
+        data = request.get_json()
+        barcode = data.get('barcode', '').strip()
+        action = data.get('action')  # 'use_existing' or 'create_new'
+        product_id = data.get('product_id')  # For use_existing
+        product_name = data.get('product_name', '').strip()  # For create_new
+
+        if not barcode or not action:
+            return jsonify({'success': False, 'error': 'Missing barcode or action'}), 400
+
+        # Find pending item
+        pending_item = next((p for p in pending_barcodes if p['barcode'] == barcode), None)
+        if not pending_item:
+            return jsonify({'success': False, 'error': 'Pending barcode not found'}), 404
+
+        if action == 'use_existing':
+            # Use existing product
+            if not product_id:
+                return jsonify({'success': False, 'error': 'Missing product_id'}), 400
+
+            product_id = int(product_id)
+
+            # Add barcode to product in Grocy
+            if not grocy_client.add_barcode_to_product(product_id, barcode):
+                return jsonify({'success': False, 'error': 'Failed to add barcode to product in Grocy'}), 500
+
+            # Get product info
+            product_info = grocy_client.get_product_info(product_id)
+            if not product_info:
+                return jsonify({'success': False, 'error': 'Failed to get product info'}), 500
+
+            product_name = product_info.get('name', 'Unknown')
+
+            # Add to stock with pending quantity/mode
+            amount = pending_item['quantity']
+            mode = pending_item['mode']
+
+            if mode == 'add':
+                success = grocy_client.add_product(product_id, amount)
+                action_text = "Added"
+            else:
+                success = grocy_client.consume_product(product_id, amount)
+                action_text = "Removed"
+
+            if not success:
+                return jsonify({'success': False, 'error': f'Failed to {action_text.lower()} to stock'}), 500
+
+            # Remove from pending
+            pending_barcodes.remove(pending_item)
+
+            logger.info(f"✅ Resolved pending '{barcode}' → Used existing product '{product_name}' (ID {product_id})")
+
+            return jsonify({
+                'success': True,
+                'message': f"✅ Used existing product '{product_name}' and {action_text.lower()} {amount}x",
+                'product_id': product_id,
+                'product_name': product_name
+            })
+
+        elif action == 'create_new':
+            # Create new product
+            if not product_name:
+                # Use name from external database
+                product_name = pending_item['product_name']
+
+            external_data = pending_item['external_data']
+            description = f"{external_data.get('brand', '')} - {external_data.get('quantity', '')}".strip(' -')
+
+            product_id = grocy_client.create_product(product_name, description)
+            if not product_id:
+                return jsonify({'success': False, 'error': 'Failed to create product in Grocy'}), 500
+
+            # Add barcode to product
+            if not grocy_client.add_barcode_to_product(product_id, barcode):
+                return jsonify({'success': False, 'error': 'Product created but failed to add barcode'}), 500
+
+            # Add to stock
+            amount = pending_item['quantity']
+            mode = pending_item['mode']
+
+            if mode == 'add':
+                success = grocy_client.add_product(product_id, amount)
+                action_text = "Added"
+            else:
+                success = grocy_client.consume_product(product_id, amount)
+                action_text = "Removed"
+
+            if not success:
+                return jsonify({'success': False, 'error': f'Product created but failed to {action_text.lower()} to stock'}), 500
+
+            # Remove from pending
+            pending_barcodes.remove(pending_item)
+
+            logger.info(f"✨ Resolved pending '{barcode}' → Created new product '{product_name}' (ID {product_id})")
+
+            return jsonify({
+                'success': True,
+                'message': f"✨ Created new product '{product_name}' and {action_text.lower()} {amount}x",
+                'product_id': product_id,
+                'product_name': product_name
+            })
+
+        else:
+            return jsonify({'success': False, 'error': 'Invalid action (must be use_existing or create_new)'}), 400
+
+    except Exception as e:
+        logger.error(f"Error resolving pending barcode: {e}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
 if __name__ == '__main__':
