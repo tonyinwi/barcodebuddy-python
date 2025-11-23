@@ -5,6 +5,23 @@ All notable changes to Paperless Grocy Magic will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.5-beta] - 2025-11-23
+
+### Changed
+- **🔍 Debug Logging for Alias Refresh** - Added console.log statements to diagnose "Refresh Aliases" button issue
+- Enhanced loadAliases() function with detailed logging for troubleshooting
+
+### Debug Features
+- Logs when loadAliases() is called
+- Checks if aliasesList element exists
+- Logs fetch URL and response status
+- Logs received data and rendering success
+- Helps identify if issue is button click, fetch, or rendering
+
+### Purpose
+This is a debug release to help identify why the "Refresh Aliases" button doesn't respond.
+Users should open browser console (F12) and check for error messages when clicking the button.
+
 ## [0.6.4-beta] - 2025-11-23
 
 ### Fixed
