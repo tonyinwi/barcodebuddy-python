@@ -232,29 +232,47 @@ class GrocyClient:
         try:
             from datetime import datetime, timedelta
 
+            # Get product to determine location_id
+            product = self.get_product(product_id)
+            if not product or not product.location_id:
+                # Fallback: get default location
+                logger.debug("Product has no location, fetching default location")
+                locations = self._request('GET', '/objects/locations')
+                if not locations:
+                    error_msg = "Could not get location for stock addition"
+                    logger.error(error_msg)
+                    return False, error_msg
+                location_id = locations[0]['id']
+                logger.debug(f"Using default location_id={location_id}")
+            else:
+                location_id = product.location_id
+                logger.debug(f"Using product location_id={location_id}")
+
             # Calculate best before date
             best_before_date = (datetime.now() + timedelta(days=best_before_days)).strftime('%Y-%m-%d')
 
             stock_data = {
                 'amount': amount,
-                'best_before_date': best_before_date
+                'best_before_date': best_before_date,
+                'location_id': location_id
             }
 
             # Add price if provided (this is where Grocy stores purchase prices!)
             if price is not None:
                 stock_data['price'] = str(price)
 
-            logger.debug(f"Adding to stock: product_id={product_id}, amount={amount}, price={price}")
+            logger.debug(f"Adding to stock: product_id={product_id}, amount={amount}, price={price}, location_id={location_id}")
             logger.debug(f"Stock data: {stock_data}")
 
             result = self._request('POST', f'/stock/products/{product_id}/add', json=stock_data)
 
             if result is not None:  # Empty dict {} is also success
-                logger.info(f"Added {amount}x product {product_id} to stock (price: {price}€)")
+                logger.info(f"Added {amount}x product {product_id} to stock (price: {price}€, location: {location_id})")
                 return True, ""
 
-            error_msg = "Grocy API returned None for stock add"
+            error_msg = "Grocy API returned None for stock add - check Grocy logs for details"
             logger.error(error_msg)
+            logger.error(f"Request was: POST /stock/products/{product_id}/add with data: {stock_data}")
             return False, error_msg
 
         except Exception as e:

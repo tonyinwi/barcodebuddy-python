@@ -5,6 +5,49 @@ All notable changes to Paperless Grocy Magic will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4-beta] - 2025-11-23
+
+### Fixed
+- **🏪 Stock Addition Now Includes Location ID** - Fixed "Grocy API returned None for stock add" error
+- Products are now successfully added to stock after creation
+- `location_id` is now included in stock addition requests (required by Grocy API)
+- Uses product's location if available, otherwise uses default location
+
+### Changed
+- Enhanced error logging for stock addition failures
+- Added debug logging showing location_id being used
+- Success message now includes location information
+
+### Technical Details
+**Issue:** Stock additions were failing because Grocy API requires `location_id` field but it was not being provided.
+
+**Before:**
+```python
+stock_data = {
+    'amount': amount,
+    'best_before_date': best_before_date
+}
+# Missing: location_id!
+```
+
+**After:**
+```python
+# Get product's location or use default
+product = self.get_product(product_id)
+location_id = product.location_id if product and product.location_id else default_location_id
+
+stock_data = {
+    'amount': amount,
+    'best_before_date': best_before_date,
+    'location_id': location_id  # Now included!
+}
+```
+
+### Impact
+- Receipt processing now works end-to-end
+- Products are created AND added to stock with correct prices
+- No more "failed to add to stock" errors
+
 ## [0.6.3-beta] - 2025-11-23
 
 ### Fixed
