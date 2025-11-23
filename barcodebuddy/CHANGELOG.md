@@ -5,6 +5,52 @@ All notable changes to Barcode Buddy (Python) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.17.0-beta] - 2025-11-23
+
+### Added
+- **Optional Product Name Update** - Checkbox to choose whether to update product name or keep it
+- Two scanning modes via checkbox:
+  - **Mode 1 (✓ Checked):** Correct receipt names - "senfk" → "Senfkörner"
+  - **Mode 2 (☐ Unchecked):** Normal scanning - Keep existing name, just add barcode
+
+### How It Works
+Each pending item now has a checkbox:
+```
+☑ Update product name to "Senfkörner"
+```
+
+**Checkbox CHECKED (default):**
+- Updates product name with OpenFoodFacts/UPC name
+- Perfect for correcting receipt abbreviations/typos
+- Example: "senfk" becomes "Senfkörner"
+
+**Checkbox UNCHECKED:**
+- Keeps existing product name
+- Just adds barcode and updates stock
+- Perfect for products with good names already
+
+### Example Workflows
+
+**Workflow 1: Correct Receipt Name**
+1. Receipt creates "senfk" (abbreviated)
+2. Scan barcode → OpenFoodFacts finds "Senfkörner"
+3. Checkbox: ✓ "Update product name to 'Senfkörner'" (default)
+4. Click "Use Existing Product"
+5. Result: Product renamed to "Senfkörner" ✅
+
+**Workflow 2: Normal Scanning**
+1. Product "Butter" exists (good name already)
+2. Scan new barcode → OpenFoodFacts finds "Butter Kerrygold"
+3. Checkbox: ☐ Uncheck (don't want to rename)
+4. Click "Use Existing Product"
+5. Result: Product stays "Butter", barcode added ✅
+
+### Benefits
+- ✅ Flexibility: Choose per-item whether to update name
+- ✅ Default checked: Corrects receipt names automatically
+- ✅ Easy to disable: Just uncheck for normal scanning
+- ✅ Solves "two modes" requirement
+
 ## [2.16.0-beta] - 2025-11-23
 
 ### Added
