@@ -489,6 +489,7 @@ def resolve_pending():
         action = data.get('action')  # 'use_existing' or 'create_new'
         product_id = data.get('product_id')  # For use_existing
         product_name = data.get('product_name', '').strip()  # For create_new
+        update_name = data.get('update_name', True)  # Whether to update product name (default: True)
 
         if not barcode or not action:
             return jsonify({'success': False, 'error': 'Missing barcode or action'}), 400
@@ -505,23 +506,30 @@ def resolve_pending():
 
             product_id = int(product_id)
 
-            # Get current product info (to show old name)
+            # Get current product info
             product_info = grocy_client.get_product_info(product_id)
             if not product_info:
                 return jsonify({'success': False, 'error': 'Failed to get product info'}), 500
 
             old_name = product_info.get('name', 'Unknown')
             new_name = pending_item['product_name']  # Name from OpenFoodFacts/UPC
+            name_updated = False
 
-            # Update product name with name from external database
-            if not grocy_client.update_product_name(product_id, new_name):
-                logger.warning(f"Failed to update product name, continuing anyway...")
+            # Conditionally update product name based on checkbox
+            if update_name:
+                if grocy_client.update_product_name(product_id, new_name):
+                    name_updated = True
+                    product_name = new_name
+                else:
+                    logger.warning(f"Failed to update product name, continuing anyway...")
+                    product_name = old_name
+            else:
+                product_name = old_name
+                logger.info(f"Skipping product name update (user choice)")
 
             # Add barcode to product in Grocy
             if not grocy_client.add_barcode_to_product(product_id, barcode):
                 return jsonify({'success': False, 'error': 'Failed to add barcode to product in Grocy'}), 500
-
-            product_name = new_name
 
             # Add to stock with pending quantity/mode
             amount = pending_item['quantity']
@@ -540,16 +548,24 @@ def resolve_pending():
             # Remove from pending
             pending_barcodes.remove(pending_item)
 
-            logger.info(f"✅ Resolved pending '{barcode}' → Updated product name: '{old_name}' → '{new_name}' (ID {product_id})")
+            # Log based on whether name was updated
+            if name_updated:
+                logger.info(f"✅ Resolved pending '{barcode}' → Updated product name: '{old_name}' → '{new_name}' (ID {product_id})")
+                success_message = f"✅ Updated '{old_name}' → '{new_name}' and {action_text.lower()} {amount}x"
+            else:
+                logger.info(f"✅ Resolved pending '{barcode}' → Used existing product '{product_name}' (ID {product_id})")
+                success_message = f"✅ Used existing product '{product_name}' and {action_text.lower()} {amount}x"
+
             logger.info(f"   Added barcode to product and {action_text.lower()} {amount}x to stock")
 
             return jsonify({
                 'success': True,
-                'message': f"✅ Updated '{old_name}' → '{new_name}' and {action_text.lower()} {amount}x",
+                'message': success_message,
                 'product_id': product_id,
                 'product_name': product_name,
                 'old_name': old_name,
-                'new_name': new_name
+                'new_name': new_name if name_updated else old_name,
+                'name_updated': name_updated
             })
 
         elif action == 'create_new':

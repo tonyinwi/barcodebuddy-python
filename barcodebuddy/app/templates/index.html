@@ -287,12 +287,13 @@
         }
 
         function loadPending() {
-            // Don't refresh if user is interacting with dropdowns or buttons
+            // Don't refresh if user is interacting with dropdowns, buttons, or checkboxes
             const activeElement = document.activeElement;
             if (activeElement && (
                 activeElement.classList.contains('product-select') ||
                 activeElement.classList.contains('btn-use-existing') ||
-                activeElement.classList.contains('btn-create-new')
+                activeElement.classList.contains('btn-create-new') ||
+                activeElement.type === 'checkbox'
             )) {
                 console.log('Skipping pending refresh - user is interacting');
                 return;
@@ -341,6 +342,14 @@
                             <select class="product-select" id="product-select-${index}">
                                 <option value="">${translations.select_product}</option>
                             </select>
+                            <div style="margin: 10px 0;">
+                                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                    <input type="checkbox" id="update-name-${index}" checked style="width: 18px; height: 18px; cursor: pointer;">
+                                    <span style="font-size: 14px; color: #374151;">
+                                        Update product name to "<strong>${item.product_name}</strong>"
+                                    </span>
+                                </label>
+                            </div>
                             <div class="button-group">
                                 <button class="btn-use-existing" onclick="resolveWithExisting(${index}, '${item.barcode}')">
                                     ✓ ${translations.use_existing}
@@ -410,18 +419,23 @@
         function resolveWithExisting(index, barcode) {
             const select = document.getElementById(`product-select-${index}`);
             const productId = select.value;
+            const updateNameCheckbox = document.getElementById(`update-name-${index}`);
+            const updateName = updateNameCheckbox ? updateNameCheckbox.checked : true;
 
             if (!productId) {
                 alert(translations.select_product_first);
                 return;
             }
 
-            // Disable buttons
+            // Disable buttons and checkbox
             const buttons = document.querySelectorAll(`#pending-list .pending-item:nth-child(${index + 1}) button`);
             buttons.forEach(btn => {
                 btn.disabled = true;
                 btn.textContent = translations.processing;
             });
+            if (updateNameCheckbox) {
+                updateNameCheckbox.disabled = true;
+            }
 
             fetch('api/pending/resolve', {
                 method: 'POST',
@@ -429,7 +443,8 @@
                 body: JSON.stringify({
                     barcode: barcode,
                     action: 'use_existing',
-                    product_id: productId
+                    product_id: productId,
+                    update_name: updateName
                 })
             })
             .then(response => response.json())
