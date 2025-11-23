@@ -5,6 +5,60 @@ All notable changes to Barcode Buddy (Python) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.14.0-beta] - 2025-11-23
+
+### Added
+- **🔗 Paperless Grocy Magic Alias Integration** - Shared product mappings between receipt processing and barcode scanning!
+- New config options: `paperless_grocy_magic_url` and `enable_alias_integration`
+- New `AliasClient` module for API communication
+- Automatic product lookup via aliases before checking external databases
+
+### How It Works
+**New Barcode Scanning Flow:**
+1. Scan barcode → Check Grocy (existing)
+2. **NEW:** Check Paperless Grocy Magic aliases
+3. If found via alias → Use Grocy product ID directly
+4. If not found → Check OpenFoodFacts/UPC Database (existing)
+
+**Integration Benefits:**
+- Receipts create auto-aliases → Barcodes can be added to those aliases
+- Single source of truth: `/share/paperless-grocy-magic/product_aliases.json`
+- Products from receipts and scanned barcodes map to same Grocy product
+- No duplicate products for receipt items vs scanned items!
+
+### Example Workflow
+```
+1. Receipt processed: "Vorderhaxe" → Creates alias + Grocy product ID 123
+2. Scan barcode 4012345678901 → Not in Grocy barcode DB
+3. Check alias API → Not found yet
+4. Create product from OpenFoodFacts → Add to Grocy
+5. User adds barcode to "vorderhaxe" alias via Paperless Grocy Magic UI
+6. Next scan of 4012345678901 → Found via alias → Use product ID 123!
+```
+
+### Configuration
+```yaml
+# In Barcode Buddy add-on config:
+paperless_grocy_magic_url: "http://localhost:5002"  # Or via ingress
+enable_alias_integration: true
+
+# In Paperless Grocy Magic config:
+alias_storage_location: "shared"  # Use /share for cross-addon access
+```
+
+### Technical Details
+- Added `alias_client.py` with API methods
+- Integrated alias check between Grocy and external database lookups
+- Connection test at startup
+- Detailed logging with 🔗 emoji for alias operations
+- Graceful degradation if Paperless Grocy Magic unavailable
+
+### Files Changed
+- `config.yaml` - New configuration options
+- `app/config.py` - New properties for alias integration
+- `app/alias_client.py` - **NEW** API client module
+- `app/main.py` - Integrated alias check in barcode flow
+
 ## [2.13.1-beta] - 2025-11-22
 
 ### Changed

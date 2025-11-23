@@ -10,6 +10,7 @@ from grocy import GrocyClient
 from scanner import ScannerHandler
 from openfoodfacts import OpenFoodFactsClient
 from upcdatabase import UPCDatabaseClient
+from alias_client import AliasClient
 from pdf_generator import generate_quantity_barcodes_pdf
 from datetime import datetime
 
@@ -57,6 +58,18 @@ if config.has_grocy:
         grocy_client = None
 else:
     logger.info("ℹ️  No Grocy configuration - running in standalone mode")
+
+# Initialize Paperless Grocy Magic alias client
+alias_client = None
+if config.has_alias_integration:
+    alias_client = AliasClient(config.paperless_grocy_magic_url)
+    if alias_client.test_connection():
+        logger.info("✅ Paperless Grocy Magic alias integration enabled")
+    else:
+        logger.warning("⚠️  Paperless Grocy Magic connection failed - alias integration disabled")
+        alias_client = None
+else:
+    logger.info("ℹ️  Alias integration not configured")
 
 # Initialize product database clients
 openfoodfacts_client = OpenFoodFactsClient()
@@ -189,66 +202,104 @@ def handle_barcode(barcode: str):
                 scan_result['status'] = 'error'
                 scan_result['message'] = f"❌ Error reading product info"
         else:
-            # Step 2: Product not in Grocy - try external databases
-            logger.info(f"🔍 Product not in Grocy, checking external databases...")
+            # Step 2: Product not in Grocy - check alias system
+            alias_found = False
+            if alias_client:
+                logger.info(f"🔗 Checking Paperless Grocy Magic aliases...")
+                alias = alias_client.find_by_barcode(barcode)
 
-            # Try databases in order: OpenFoodFacts → UPC Database
-            # Only query databases that are enabled in configuration
-            external_product = None
-            database_name = None
+                if alias:
+                    # Found via alias! Use the Grocy product ID
+                    product_id = alias['grocy_product_id']
+                    product_name = alias['grocy_product_name']
+                    alias_found = True
 
-            if config.enable_openfoodfacts and not external_product:
-                external_product = openfoodfacts_client.lookup_barcode(barcode)
+                    logger.info(f"🔗 Found product via alias: {product_name} (ID {product_id})")
+
+                    # Use current quantity, or default to 1
+                    amount = current_quantity if current_quantity > 0 else 1.0
+
+                    # Add or consume based on current mode
+                    if current_mode == 'add':
+                        success = grocy_client.add_product(product_id, amount)
+                        action_emoji = "➕"
+                        action_text = "Added"
+                    else:  # consume mode
+                        success = grocy_client.consume_product(product_id, amount)
+                        action_emoji = "➖"
+                        action_text = "Removed"
+
+                    if success:
+                        quantity_text = f" ({amount}x)" if amount != 1 else ""
+                        scan_result['status'] = 'success'
+                        scan_result['message'] = f"🔗 {action_emoji} {action_text} via alias: {product_name}{quantity_text}"
+                        logger.info(f"🔗 {action_emoji} {action_text} product via alias: {product_name} (quantity: {amount})")
+                        current_quantity = 0.0  # Reset after successful operation
+                    else:
+                        scan_result['status'] = 'error'
+                        scan_result['message'] = f"❌ Failed to {action_text.lower()}: {product_name}"
+
+            # Step 3: Not in Grocy, not in aliases - try external databases
+            if not alias_found:
+                logger.info(f"🔍 Not in aliases, checking external databases...")
+
+                # Try databases in order: OpenFoodFacts → UPC Database
+                # Only query databases that are enabled in configuration
+                external_product = None
+                database_name = None
+
+                if config.enable_openfoodfacts and not external_product:
+                    external_product = openfoodfacts_client.lookup_barcode(barcode)
+                    if external_product:
+                        database_name = "OpenFoodFacts"
+
+                if config.enable_upcdatabase and not external_product:
+                    external_product = upcdatabase_client.lookup_barcode(barcode)
+                    if external_product:
+                        database_name = "UPC Database"
+
                 if external_product:
-                    database_name = "OpenFoodFacts"
+                    # Step 4: Found in external database - create in Grocy
+                    product_name = external_product['name']
+                    description = f"{external_product.get('brand', '')} - {external_product.get('quantity', '')}".strip(' -')
 
-            if config.enable_upcdatabase and not external_product:
-                external_product = upcdatabase_client.lookup_barcode(barcode)
-                if external_product:
-                    database_name = "UPC Database"
+                    logger.info(f"🆕 Creating new product from {database_name}: {product_name}")
+                    product_id = grocy_client.create_product(product_name, description)
 
-            if external_product:
-                # Step 3: Found in external database - create in Grocy
-                product_name = external_product['name']
-                description = f"{external_product.get('brand', '')} - {external_product.get('quantity', '')}".strip(' -')
+                    if product_id:
+                        # Step 5: Add barcode to new product
+                        if grocy_client.add_barcode_to_product(product_id, barcode):
+                            # Step 6: Add to stock with current quantity (only makes sense in add mode)
+                            amount = current_quantity if current_quantity > 0 else 1.0
 
-                logger.info(f"🆕 Creating new product from {database_name}: {product_name}")
-                product_id = grocy_client.create_product(product_name, description)
+                            if current_mode == 'add':
+                                success = grocy_client.add_product(product_id, amount)
+                                action_text = "Added"
+                            else:
+                                # Note: Consuming a just-created product is unusual, but supported
+                                success = grocy_client.consume_product(product_id, amount)
+                                action_text = "Removed"
 
-                if product_id:
-                    # Step 4: Add barcode to new product
-                    if grocy_client.add_barcode_to_product(product_id, barcode):
-                        # Step 5: Add to stock with current quantity (only makes sense in add mode)
-                        amount = current_quantity if current_quantity > 0 else 1.0
-
-                        if current_mode == 'add':
-                            success = grocy_client.add_product(product_id, amount)
-                            action_text = "Added"
-                        else:
-                            # Note: Consuming a just-created product is unusual, but supported
-                            success = grocy_client.consume_product(product_id, amount)
-                            action_text = "Removed"
-
-                        if success:
-                            quantity_text = f" ({amount}x)" if amount != 1 else ""
-                            scan_result['status'] = 'success'
-                            scan_result['message'] = f"🆕 Created from {database_name} & {action_text}: {product_name}{quantity_text}"
-                            logger.info(f"🆕 Successfully created from {database_name} and {action_text.lower()}: {product_name} (quantity: {amount})")
-                            current_quantity = 0.0  # Reset after successful operation
+                            if success:
+                                quantity_text = f" ({amount}x)" if amount != 1 else ""
+                                scan_result['status'] = 'success'
+                                scan_result['message'] = f"🆕 Created from {database_name} & {action_text}: {product_name}{quantity_text}"
+                                logger.info(f"🆕 Successfully created from {database_name} and {action_text.lower()}: {product_name} (quantity: {amount})")
+                                current_quantity = 0.0  # Reset after successful operation
+                            else:
+                                scan_result['status'] = 'warning'
+                                scan_result['message'] = f"⚠️ Created {product_name}, but failed to {action_text.lower()}"
                         else:
                             scan_result['status'] = 'warning'
-                            scan_result['message'] = f"⚠️ Created {product_name}, but failed to {action_text.lower()}"
+                            scan_result['message'] = f"⚠️ Created {product_name}, but failed to add barcode"
                     else:
-                        scan_result['status'] = 'warning'
-                        scan_result['message'] = f"⚠️ Created {product_name}, but failed to add barcode"
+                        scan_result['status'] = 'error'
+                        scan_result['message'] = f"❌ Failed to create product in Grocy"
                 else:
-                    scan_result['status'] = 'error'
-                    scan_result['message'] = f"❌ Failed to create product in Grocy"
-            else:
-                # Not found anywhere
-                scan_result['status'] = 'not_found'
-                scan_result['message'] = f"❓ Barcode not found in Grocy, OpenFoodFacts, or UPC Database"
-                logger.warning(f"❓ Barcode {barcode} not found in any database")
+                    # Not found anywhere
+                    scan_result['status'] = 'not_found'
+                    scan_result['message'] = f"❓ Barcode not found in Grocy, aliases, OpenFoodFacts, or UPC Database"
+                    logger.warning(f"❓ Barcode {barcode} not found in any database")
     else:
         scan_result['status'] = 'no_grocy'
         scan_result['message'] = f"📦 Scanned (no Grocy configured)"

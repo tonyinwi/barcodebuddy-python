@@ -82,3 +82,20 @@ class Config:
         if fmt in ['code128', 'qr']:
             return fmt
         return 'code128'  # Default fallback
+
+    @property
+    def paperless_grocy_magic_url(self) -> Optional[str]:
+        """Get Paperless Grocy Magic URL."""
+        url = self._config.get('paperless_grocy_magic_url', '').strip()
+        return url if url else None
+
+    @property
+    def enable_alias_integration(self) -> bool:
+        """Check if alias integration is enabled."""
+        return self._config.get('enable_alias_integration', True)
+
+    @property
+    def has_alias_integration(self) -> bool:
+        """Check if alias integration is fully configured."""
+        return (self.paperless_grocy_magic_url is not None and
+                self.enable_alias_integration)

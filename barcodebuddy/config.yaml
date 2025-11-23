@@ -1,5 +1,5 @@
 name: "Barcode Buddy (Python) (beta)"
-version: "2.13.1-beta"
+version: "2.14.0-beta"
 slug: "barcodebuddy-python"
 description: "Python-based Barcode Scanner with Grocy integration"
 arch:
@@ -38,6 +38,10 @@ options:
   grocy_url: ""
   grocy_api_key: ""
 
+  # Paperless Grocy Magic Integration (for shared aliases)
+  paperless_grocy_magic_url: ""
+  enable_alias_integration: true
+
   # Barcode Configuration
   barcode_add: "BBUDDY-ADD"
   barcode_consume: "BBUDDY-CONSUME"
@@ -60,6 +64,10 @@ schema:
   # Grocy Integration
   grocy_url: str
   grocy_api_key: str
+
+  # Paperless Grocy Magic Integration
+  paperless_grocy_magic_url: str
+  enable_alias_integration: bool
 
   # Barcode Configuration
   barcode_add: str
