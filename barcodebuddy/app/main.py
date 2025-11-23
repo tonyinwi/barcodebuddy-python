@@ -432,8 +432,19 @@ def get_pending():
 
 @app.route('/api/available-products')
 def get_available_products():
-    """Get available products from aliases and Grocy."""
+    """
+    Get available products from aliases and Grocy.
+
+    Query parameters:
+    - search_term: Optional fuzzy matching search term
+    - without_barcode: If true, only show products without barcodes (default: false)
+    """
     try:
+        from difflib import SequenceMatcher
+
+        search_term = request.args.get('search_term', '').strip().lower()
+        without_barcode = request.args.get('without_barcode', 'false').lower() == 'true'
+
         products = []
 
         # Get products from aliases if available
@@ -441,12 +452,20 @@ def get_available_products():
             aliases = alias_client.get_all_aliases()
             if aliases:
                 for alias in aliases:
+                    has_barcode = alias.get('has_grocy_barcode', False) or len(alias.get('barcodes', [])) > 0
+
+                    # Skip if we only want products without barcodes
+                    if without_barcode and has_barcode:
+                        continue
+
                     products.append({
                         'source': 'alias',
                         'id': alias['grocy_product_id'],
                         'name': alias['grocy_product_name'],
                         'alias_name': alias['receipt_name'],
-                        'barcodes': alias.get('barcodes', [])
+                        'barcodes': alias.get('barcodes', []),
+                        'has_barcode': has_barcode,
+                        'openfood_name': alias.get('openfood_name')
                     })
 
         # Also get all products from Grocy
@@ -457,21 +476,44 @@ def get_available_products():
                 alias_product_ids = {p['id'] for p in products}
                 for gp in grocy_products:
                     if gp['id'] not in alias_product_ids:
+                        # For Grocy products, we assume they might have barcodes
+                        # Skip if we only want products without barcodes
+                        if without_barcode:
+                            continue
+
                         products.append({
                             'source': 'grocy',
                             'id': gp['id'],
                             'name': gp.get('name', 'Unknown'),
                             'alias_name': None,
-                            'barcodes': []
+                            'barcodes': [],
+                            'has_barcode': False  # We don't know, assume no
                         })
 
-        # Sort by name
-        products.sort(key=lambda x: x['name'].lower())
+        # Fuzzy matching if search term provided
+        if search_term:
+            for product in products:
+                # Calculate match score against product name and alias name
+                name_score = SequenceMatcher(None, search_term, product['name'].lower()).ratio()
+                alias_score = 0
+                if product.get('alias_name'):
+                    alias_score = SequenceMatcher(None, search_term, product['alias_name'].lower()).ratio()
+
+                # Use the better score
+                product['match_score'] = max(name_score, alias_score)
+
+            # Sort by match score (best first), then by name
+            products.sort(key=lambda x: (-x['match_score'], x['name'].lower()))
+        else:
+            # Sort by name only
+            products.sort(key=lambda x: x['name'].lower())
 
         return jsonify({
             'success': True,
             'products': products,
-            'count': len(products)
+            'count': len(products),
+            'search_term': search_term,
+            'without_barcode': without_barcode
         })
 
     except Exception as e:

@@ -361,59 +361,81 @@
                         </div>
                     `).join('');
 
-                    // Load available products for each select
-                    loadAvailableProducts();
+                    // Load available products for each select with fuzzy matching
+                    data.pending.forEach((item, index) => {
+                        loadAvailableProductsForItem(index, item.product_name);
+                    });
                 })
                 .catch(error => console.error('Load pending error:', error));
         }
 
-        function loadAvailableProducts() {
-            // Only load once and cache
-            if (availableProducts) {
-                populateSelects();
-                return;
-            }
+        function loadAvailableProductsForItem(index, searchTerm) {
+            // Load products with fuzzy matching and filter for products without barcodes
+            const params = new URLSearchParams({
+                search_term: searchTerm,
+                without_barcode: 'true'  // Only show products without barcodes
+            });
 
-            fetch('api/available-products')
+            fetch(`api/available-products?${params}`)
                 .then(response => response.json())
                 .then(data => {
                     if (!data.success) return;
-                    availableProducts = data.products;
-                    populateSelects();
+                    populateSelect(index, data.products, searchTerm);
                 })
-                .catch(error => console.error('Load available products error:', error));
+                .catch(error => console.error(`Load products for item ${index} error:`, error));
         }
 
-        function populateSelects() {
-            const selects = document.querySelectorAll('[id^="product-select-"]');
-            selects.forEach(select => {
-                const currentValue = select.value;
+        function populateSelect(index, products, searchTerm) {
+            const select = document.getElementById(`product-select-${index}`);
+            if (!select) return;
 
-                // Group by source
-                const aliasProducts = availableProducts.filter(p => p.source === 'alias');
-                const grocyProducts = availableProducts.filter(p => p.source === 'grocy');
+            // Group by source
+            const aliasProducts = products.filter(p => p.source === 'alias');
+            const grocyProducts = products.filter(p => p.source === 'grocy');
 
-                let options = `<option value="">${translations.select_product}</option>`;
+            let options = `<option value="">${translations.select_product}</option>`;
+            let bestMatchId = null;
+            let bestMatchScore = 0;
 
-                if (aliasProducts.length > 0) {
-                    options += '<optgroup label="From Aliases (Receipt Names)">';
-                    aliasProducts.forEach(p => {
-                        options += `<option value="${p.id}">${p.name} (${p.alias_name})</option>`;
-                    });
-                    options += '</optgroup>';
-                }
+            if (aliasProducts.length > 0) {
+                options += '<optgroup label="📝 From Receipts (ohne Barcode)">';
+                aliasProducts.forEach(p => {
+                    const matchScore = p.match_score || 0;
+                    const scoreLabel = matchScore > 0.7 ? ` [${Math.round(matchScore * 100)}% Match]` : '';
+                    options += `<option value="${p.id}">${p.name}${p.alias_name ? ` (${p.alias_name})` : ''}${scoreLabel}</option>`;
 
-                if (grocyProducts.length > 0) {
-                    options += '<optgroup label="From Grocy">';
-                    grocyProducts.forEach(p => {
-                        options += `<option value="${p.id}">${p.name}</option>`;
-                    });
-                    options += '</optgroup>';
-                }
+                    // Track best match
+                    if (matchScore > bestMatchScore) {
+                        bestMatchScore = matchScore;
+                        bestMatchId = p.id;
+                    }
+                });
+                options += '</optgroup>';
+            }
 
-                select.innerHTML = options;
-                select.value = currentValue;
-            });
+            if (grocyProducts.length > 0) {
+                options += '<optgroup label="📦 From Grocy">';
+                grocyProducts.forEach(p => {
+                    const matchScore = p.match_score || 0;
+                    const scoreLabel = matchScore > 0.7 ? ` [${Math.round(matchScore * 100)}% Match]` : '';
+                    options += `<option value="${p.id}">${p.name}${scoreLabel}</option>`;
+
+                    // Track best match
+                    if (matchScore > bestMatchScore) {
+                        bestMatchScore = matchScore;
+                        bestMatchId = p.id;
+                    }
+                });
+                options += '</optgroup>';
+            }
+
+            select.innerHTML = options;
+
+            // Auto-select best match if score is good enough (> 60%)
+            if (bestMatchId && bestMatchScore > 0.6) {
+                select.value = bestMatchId;
+                console.log(`Auto-selected product ${bestMatchId} with ${Math.round(bestMatchScore * 100)}% match for "${searchTerm}"`);
+            }
         }
 
         function resolveWithExisting(index, barcode) {
