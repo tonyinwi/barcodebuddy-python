@@ -86,12 +86,15 @@ class PriceUpdateService:
         logger.info("Step 2: Fetching Grocy products...")
         grocy_products = self.grocy.get_all_products()
 
-        if not grocy_products:
-            result.errors.append("Could not fetch Grocy products")
-            logger.error("Failed to fetch Grocy products")
+        if grocy_products is None:
+            result.errors.append("Could not fetch Grocy products - API connection failed")
+            logger.error("Failed to fetch Grocy products from API")
             return result
 
-        logger.info(f"Found {len(grocy_products)} products in Grocy")
+        if len(grocy_products) == 0:
+            logger.warning("⚠️  Grocy has no products yet - all receipt items will be created as new products")
+        else:
+            logger.info(f"Found {len(grocy_products)} products in Grocy")
 
         # Step 3: Match receipt items to Grocy products
         logger.info("Step 3: Matching products...")
@@ -211,9 +214,11 @@ class PriceUpdateService:
         # Get Grocy products
         grocy_products = self.grocy.get_all_products()
 
-        if not grocy_products:
-            result.errors.append("Could not fetch Grocy products")
+        if grocy_products is None:
+            result.errors.append("Could not fetch Grocy products - API connection failed")
             return result
+
+        # Empty product list is OK - items will be created as new products
 
         # Match and update
         matches = self.matcher.match_all(receipt.items, grocy_products)

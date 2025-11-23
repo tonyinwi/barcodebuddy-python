@@ -5,6 +5,40 @@ All notable changes to Paperless Grocy Magic will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.3-beta] - 2025-11-23
+
+### Fixed
+- **🐛 Empty Grocy Database Handling** - Fixed false error when Grocy has no products yet
+- Receipt processing now works correctly with empty Grocy database
+- Distinguishes between API failure (`None`) and empty product list (`[]`)
+- All receipt items will be created as new products when Grocy is empty
+
+### Changed
+- Error message now specifies "API connection failed" vs "no products yet"
+- Added warning log when Grocy has 0 products: "⚠️  Grocy has no products yet - all receipt items will be created as new products"
+
+### Technical Details
+**Before:**
+```python
+if not grocy_products:  # Treats [] and None the same!
+    return error("Could not fetch Grocy products")
+```
+
+**After:**
+```python
+if grocy_products is None:  # API failed
+    return error("Could not fetch Grocy products - API connection failed")
+
+if len(grocy_products) == 0:  # Empty but valid
+    logger.warning("Grocy has no products yet - will create all as new")
+    # Continue processing...
+```
+
+### Impact
+- Users with fresh Grocy installations can now process receipts
+- First receipt will create all products from scratch
+- No more false "Could not fetch" errors
+
 ## [0.6.2-beta] - 2025-11-23
 
 ### Added
