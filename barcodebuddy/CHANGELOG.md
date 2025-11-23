@@ -81,14 +81,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Includes quantity and mode (add/consume) from scan
 - Gracefully handles products from both aliases and Grocy
 
-### UI Integration (TODO)
-Current implementation has API backend ready. UI needs to be extended to show:
-- Pending barcodes section
-- Product selection dropdown
-- "Use Existing" / "Create New" buttons
+### UI Integration ✅
+Complete UI implementation with:
+- **Pending Barcodes Card** - Auto-shows when items pending, auto-hides when empty
+- **Badge counter** showing number of pending items
+- **Product selection dropdown** grouped by source (Aliases vs Grocy)
+- **"Use Existing Product" button** - Adds barcode to selected product
+- **"Create New Product" button** - Creates new product from external data
+- **Auto-refresh** every 2 seconds to update pending list
+- **Status indicator** (⏸️) in recent scans for pending items
+
+### JavaScript Functions
+- `loadPending()` - Fetch and display pending barcodes
+- `loadAvailableProducts()` - Fetch products with caching
+- `populateSelects()` - Populate dropdowns with grouped products
+- `resolveWithExisting(index, barcode)` - Resolve using selected product
+- `resolveWithNew(index, barcode)` - Resolve by creating new product
 
 ### Files Modified
 - `app/main.py` - Pending system + 3 new API endpoints
+- `app/templates/index.html` - Complete UI with pending barcodes section
 - `app/config.yaml` - Version 2.15.0-beta
 - `app/__init__.py` - Version 2.15.0-beta
 - `run.sh` - Version 2.15.0-beta
