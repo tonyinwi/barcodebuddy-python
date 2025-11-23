@@ -476,11 +476,8 @@ def get_available_products():
                 alias_product_ids = {p['id'] for p in products}
                 for gp in grocy_products:
                     if gp['id'] not in alias_product_ids:
-                        # For Grocy products, we assume they might have barcodes
-                        # Skip if we only want products without barcodes
-                        if without_barcode:
-                            continue
-
+                        # For Grocy products not in aliases, we assume they don't have barcodes
+                        # Include them when filtering for products without barcodes
                         products.append({
                             'source': 'grocy',
                             'id': gp['id'],
