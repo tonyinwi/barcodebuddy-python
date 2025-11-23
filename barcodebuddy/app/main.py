@@ -660,6 +660,81 @@ def resolve_pending():
         logger.error(f"Error resolving pending barcode: {e}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/api/pending/change-name', methods=['POST'])
+def change_product_name():
+    """
+    Change product name only - does NOT add to stock!
+    Used for correcting receipt product names with OpenFoodFacts names.
+    """
+    global pending_barcodes
+
+    try:
+        data = request.get_json()
+        barcode = data.get('barcode', '').strip()
+        product_id = data.get('product_id')
+
+        if not barcode or not product_id:
+            return jsonify({'success': False, 'error': 'Missing barcode or product_id'}), 400
+
+        product_id = int(product_id)
+
+        # Find pending item
+        pending_item = next((p for p in pending_barcodes if p['barcode'] == barcode), None)
+        if not pending_item:
+            return jsonify({'success': False, 'error': 'Pending barcode not found'}), 404
+
+        # Get current product info
+        product_info = grocy_client.get_product_info(product_id)
+        if not product_info:
+            return jsonify({'success': False, 'error': 'Failed to get product info'}), 500
+
+        old_name = product_info.get('name', 'Unknown')
+        new_name = pending_item['product_name']  # Name from OpenFoodFacts/UPC
+
+        # Update product name in Grocy
+        if not grocy_client.update_product_name(product_id, new_name):
+            return jsonify({'success': False, 'error': 'Failed to update product name in Grocy'}), 500
+
+        # Add barcode to product in Grocy
+        if not grocy_client.add_barcode_to_product(product_id, barcode):
+            return jsonify({'success': False, 'error': 'Name updated but failed to add barcode'}), 500
+
+        # Update alias with OpenFoodFacts name and mark as having Grocy barcode
+        if alias_client:
+            try:
+                # Find alias by product_id (reverse lookup)
+                aliases = alias_client.get_all_aliases()
+                matching_alias = next((a for a in aliases if a['grocy_product_id'] == product_id), None)
+
+                if matching_alias:
+                    receipt_name = matching_alias['receipt_name']
+                    # Update OpenFoodFacts name
+                    alias_client.update_openfood_name(receipt_name, new_name)
+                    # Mark as having Grocy barcode
+                    alias_client.mark_barcode_added_to_grocy(receipt_name, barcode)
+                    logger.info(f"✅ Updated alias '{receipt_name}' with OpenFood name and barcode flag")
+            except Exception as e:
+                logger.warning(f"Failed to update alias, continuing: {e}")
+
+        # Remove from pending
+        pending_barcodes.remove(pending_item)
+
+        logger.info(f"✏️ Changed product name: '{old_name}' → '{new_name}' (ID {product_id})")
+        logger.info(f"   Added barcode {barcode} to product (NO stock change)")
+
+        return jsonify({
+            'success': True,
+            'message': f"✏️ Renamed '{old_name}' → '{new_name}' and added barcode (no stock change)",
+            'product_id': product_id,
+            'old_name': old_name,
+            'new_name': new_name,
+            'barcode': barcode
+        })
+
+    except Exception as e:
+        logger.error(f"Error changing product name: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 if __name__ == '__main__':
     logger.info("🚀 Starting Barcode Buddy (Python)")
     logger.info(f"📱 Scanner: Auto-detecting all available devices")

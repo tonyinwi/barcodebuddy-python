@@ -189,6 +189,15 @@
             background: #2563eb;
         }
 
+        .btn-change-name {
+            flex: 1;
+            background: #f59e0b;
+        }
+
+        .btn-change-name:hover {
+            background: #d97706;
+        }
+
         .pending-badge {
             background: #f59e0b;
             color: white;
@@ -274,6 +283,7 @@
             select_product: "Select existing product...",
             use_existing: "Use Existing",
             create_new: "Create New",
+            change_name: "Namen ändern",
             processing: "Processing...",
             resolved: "Resolved!",
             select_product_first: "Please select a product first"
@@ -293,6 +303,7 @@
                 activeElement.classList.contains('product-select') ||
                 activeElement.classList.contains('btn-use-existing') ||
                 activeElement.classList.contains('btn-create-new') ||
+                activeElement.classList.contains('btn-change-name') ||
                 activeElement.type === 'checkbox'
             )) {
                 console.log('Skipping pending refresh - user is interacting');
@@ -351,6 +362,9 @@
                                 </label>
                             </div>
                             <div class="button-group">
+                                <button class="btn-change-name" onclick="changeNameOnly(${index}, '${item.barcode}')">
+                                    ✏️ ${translations.change_name}
+                                </button>
                                 <button class="btn-use-existing" onclick="resolveWithExisting(${index}, '${item.barcode}')">
                                     ✓ ${translations.use_existing}
                                 </button>
@@ -516,6 +530,47 @@
             })
             .catch(error => {
                 console.error('Resolve error:', error);
+                alert(translations.network_error);
+                buttons.forEach(btn => btn.disabled = false);
+            });
+        }
+
+        function changeNameOnly(index, barcode) {
+            const select = document.getElementById(`product-select-${index}`);
+            const productId = select.value;
+
+            if (!productId) {
+                alert(translations.select_product_first);
+                return;
+            }
+
+            // Disable all buttons
+            const buttons = document.querySelectorAll(`#pending-list .pending-item:nth-child(${index + 1}) button`);
+            buttons.forEach(btn => {
+                btn.disabled = true;
+                btn.textContent = translations.processing;
+            });
+
+            fetch('api/pending/change-name', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    barcode: barcode,
+                    product_id: productId
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    loadPending();  // Refresh pending list
+                    loadScans();    // Refresh scans to show result
+                } else {
+                    alert(`${translations.error}: ${data.error}`);
+                    buttons.forEach(btn => btn.disabled = false);
+                }
+            })
+            .catch(error => {
+                console.error('Change name error:', error);
                 alert(translations.network_error);
                 buttons.forEach(btn => btn.disabled = false);
             });
