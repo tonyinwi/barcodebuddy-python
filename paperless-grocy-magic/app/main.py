@@ -436,12 +436,25 @@ Datum: 22.11.2025</textarea>
 
         // Alias Management Functions
         function loadAliases() {
+            console.log('🔄 loadAliases() called');
             const aliasesDiv = document.getElementById('aliasesList');
+
+            if (!aliasesDiv) {
+                console.error('❌ Element #aliasesList not found!');
+                return;
+            }
+
             aliasesDiv.innerHTML = '<em>Loading...</em>';
+            console.log('📡 Fetching from:', baseUrl + '/api/aliases');
 
             fetch(baseUrl + '/api/aliases')
-                .then(r => r.json())
+                .then(r => {
+                    console.log('📥 Response received, status:', r.status);
+                    return r.json();
+                })
                 .then(data => {
+                    console.log('📊 Data received:', data);
+
                     if (data.success && data.aliases.length > 0) {
                         let html = '<table style="width: 100%; border-collapse: collapse;">';
                         html += '<tr style="background: #f0f0f0; font-weight: bold;">';
@@ -472,11 +485,14 @@ Datum: 22.11.2025</textarea>
                         html += '</table>';
                         html += `<p style="margin-top: 10px; color: #666; font-size: 12px;">Total: ${data.count} aliases</p>`;
                         aliasesDiv.innerHTML = html;
+                        console.log('✅ Aliases table rendered successfully');
                     } else {
                         aliasesDiv.innerHTML = '<em>No aliases configured yet. Click "Add Alias" to create one.</em>';
+                        console.log('ℹ️ No aliases found');
                     }
                 })
                 .catch(e => {
+                    console.error('❌ Error loading aliases:', e);
                     aliasesDiv.innerHTML = `<span class="error">Error loading aliases: ${e.message}</span>`;
                 });
         }
