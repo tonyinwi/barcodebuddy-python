@@ -5,6 +5,17 @@ All notable changes to Barcode Buddy (Python) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.15.1-beta] - 2025-11-23
+
+### Fixed
+- **Critical Bug:** Product dropdown in pending barcodes UI was empty
+- Added missing `get_all_products()` method to GrocyClient
+- The `/api/available-products` endpoint now returns products correctly
+- Error: `AttributeError: 'GrocyClient' object has no attribute 'get_all_products'` fixed
+
+### Impact
+Without this fix, users could not select existing products when resolving pending barcodes, making the duplicate prevention system unusable.
+
 ## [2.15.0-beta] - 2025-11-23
 
 ### Added
