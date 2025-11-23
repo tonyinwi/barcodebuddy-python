@@ -505,16 +505,23 @@ def resolve_pending():
 
             product_id = int(product_id)
 
-            # Add barcode to product in Grocy
-            if not grocy_client.add_barcode_to_product(product_id, barcode):
-                return jsonify({'success': False, 'error': 'Failed to add barcode to product in Grocy'}), 500
-
-            # Get product info
+            # Get current product info (to show old name)
             product_info = grocy_client.get_product_info(product_id)
             if not product_info:
                 return jsonify({'success': False, 'error': 'Failed to get product info'}), 500
 
-            product_name = product_info.get('name', 'Unknown')
+            old_name = product_info.get('name', 'Unknown')
+            new_name = pending_item['product_name']  # Name from OpenFoodFacts/UPC
+
+            # Update product name with name from external database
+            if not grocy_client.update_product_name(product_id, new_name):
+                logger.warning(f"Failed to update product name, continuing anyway...")
+
+            # Add barcode to product in Grocy
+            if not grocy_client.add_barcode_to_product(product_id, barcode):
+                return jsonify({'success': False, 'error': 'Failed to add barcode to product in Grocy'}), 500
+
+            product_name = new_name
 
             # Add to stock with pending quantity/mode
             amount = pending_item['quantity']
@@ -533,13 +540,16 @@ def resolve_pending():
             # Remove from pending
             pending_barcodes.remove(pending_item)
 
-            logger.info(f"✅ Resolved pending '{barcode}' → Used existing product '{product_name}' (ID {product_id})")
+            logger.info(f"✅ Resolved pending '{barcode}' → Updated product name: '{old_name}' → '{new_name}' (ID {product_id})")
+            logger.info(f"   Added barcode to product and {action_text.lower()} {amount}x to stock")
 
             return jsonify({
                 'success': True,
-                'message': f"✅ Used existing product '{product_name}' and {action_text.lower()} {amount}x",
+                'message': f"✅ Updated '{old_name}' → '{new_name}' and {action_text.lower()} {amount}x",
                 'product_id': product_id,
-                'product_name': product_name
+                'product_name': product_name,
+                'old_name': old_name,
+                'new_name': new_name
             })
 
         elif action == 'create_new':

@@ -186,3 +186,18 @@ class GrocyClient:
             logger.info(f"✅ Added barcode {barcode} to product {product_id}")
             return True
         return False
+
+    def update_product_name(self, product_id: int, new_name: str) -> bool:
+        """
+        Update the name of an existing product.
+
+        Returns True if successful, False otherwise.
+        """
+        data = {
+            'name': new_name
+        }
+        result = self._request('PUT', f'objects/products/{product_id}', json=data)
+        if result:
+            logger.info(f"✅ Updated product {product_id} name to '{new_name}'")
+            return True
+        return False
