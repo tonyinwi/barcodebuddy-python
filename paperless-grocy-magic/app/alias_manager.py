@@ -8,15 +8,18 @@ logger = logging.getLogger(__name__)
 
 
 class ProductAlias:
-    """Represents a mapping from receipt product name to Grocy product."""
+    """Represents a cross-reference mapping: Receipt name ↔ OpenFoodFacts name ↔ Barcode ↔ Grocy product."""
 
     def __init__(self, receipt_name: str, grocy_product_id: int, grocy_product_name: str,
-                 barcodes: List[str] = None, notes: str = ""):
+                 barcodes: List[str] = None, notes: str = "", openfood_name: str = None,
+                 has_grocy_barcode: bool = False):
         self.receipt_name = receipt_name.strip().lower()  # Normalize for matching
         self.grocy_product_id = grocy_product_id
         self.grocy_product_name = grocy_product_name
         self.barcodes = barcodes or []  # List of barcodes for this product
         self.notes = notes
+        self.openfood_name = openfood_name  # Full name from OpenFoodFacts/UPC (if available)
+        self.has_grocy_barcode = has_grocy_barcode  # True if barcode is registered in Grocy
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -25,7 +28,9 @@ class ProductAlias:
             'grocy_product_id': self.grocy_product_id,
             'grocy_product_name': self.grocy_product_name,
             'barcodes': self.barcodes,
-            'notes': self.notes
+            'notes': self.notes,
+            'openfood_name': self.openfood_name,
+            'has_grocy_barcode': self.has_grocy_barcode
         }
 
     @staticmethod
@@ -36,7 +41,9 @@ class ProductAlias:
             grocy_product_id=data['grocy_product_id'],
             grocy_product_name=data['grocy_product_name'],
             barcodes=data.get('barcodes', []),
-            notes=data.get('notes', '')
+            notes=data.get('notes', ''),
+            openfood_name=data.get('openfood_name'),
+            has_grocy_barcode=data.get('has_grocy_barcode', False)
         )
 
 
@@ -169,6 +176,63 @@ class AliasManager:
     def get_count(self) -> int:
         """Get number of aliases."""
         return len(self.aliases)
+
+    def update_openfood_name(self, receipt_name: str, openfood_name: str) -> bool:
+        """
+        Update the OpenFoodFacts name for an alias.
+        Used when barcode is scanned and external database provides a better name.
+        """
+        try:
+            alias = self.get_alias(receipt_name)
+            if not alias:
+                logger.warning(f"Cannot update OpenFood name: alias '{receipt_name}' not found")
+                return False
+
+            alias.openfood_name = openfood_name
+            self._save_aliases()
+            logger.info(f"Updated OpenFood name for '{receipt_name}' to '{openfood_name}'")
+            return True
+        except Exception as e:
+            logger.error(f"Error updating OpenFood name: {e}")
+            return False
+
+    def mark_barcode_added_to_grocy(self, receipt_name: str, barcode: str = None) -> bool:
+        """
+        Mark that a barcode has been added to Grocy for this alias.
+        This indicates the product is fully set up (has barcode in Grocy).
+        """
+        try:
+            alias = self.get_alias(receipt_name)
+            if not alias:
+                logger.warning(f"Cannot mark barcode: alias '{receipt_name}' not found")
+                return False
+
+            alias.has_grocy_barcode = True
+            if barcode and barcode not in alias.barcodes:
+                alias.barcodes.append(barcode)
+            self._save_aliases()
+            logger.info(f"Marked '{receipt_name}' as having Grocy barcode")
+            return True
+        except Exception as e:
+            logger.error(f"Error marking barcode: {e}")
+            return False
+
+    def get_aliases_without_grocy_barcode(self) -> List[ProductAlias]:
+        """
+        Get all aliases that don't have a barcode registered in Grocy yet.
+        Used for showing products that still need barcode assignment.
+        """
+        return [alias for alias in self.aliases.values() if not alias.has_grocy_barcode]
+
+    def get_alias_by_product_id(self, product_id: int) -> Optional[ProductAlias]:
+        """
+        Find alias by Grocy product ID.
+        Useful for reverse lookups.
+        """
+        for alias in self.aliases.values():
+            if alias.grocy_product_id == product_id:
+                return alias
+        return None
 
     def clear_all(self) -> bool:
         """Remove all aliases (use with caution!)."""
