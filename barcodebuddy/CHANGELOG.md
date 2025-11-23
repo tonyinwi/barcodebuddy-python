@@ -5,6 +5,41 @@ All notable changes to Barcode Buddy (Python) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.0-beta] - 2025-11-23
+
+### Added
+- **Automatic Product Name Upgrade** - When using existing product, name is updated with OpenFoodFacts/UPC name
+- New method: `update_product_name()` in GrocyClient
+
+### How It Works
+**Before:**
+- Receipt creates: "senfk" (ID 123) - short name from receipt
+- Scan barcode → "Use Existing" → Product stays "senfk"
+
+**After:**
+- Receipt creates: "senfk" (ID 123) - short name from receipt
+- Scan barcode → OpenFoodFacts finds "Senfkörner"
+- "Use Existing" → **Product name updated to "Senfkörner"** ✅
+- Best of both worlds: Auto-create from receipts + Upgrade with proper names!
+
+### Example Flow
+1. Process receipt → Creates product "senfk" with alias
+2. Scan barcode 4012345678901
+3. OpenFoodFacts finds "Senfkörner"
+4. UI shows pending: "Found in OpenFoodFacts: Senfkörner"
+5. Select existing product "senfk" from dropdown
+6. Click "Use Existing Product"
+7. **Product renamed:** "senfk" → "Senfkörner"
+8. Barcode added to product
+9. Stock updated
+10. Future scans find product directly in Grocy ✅
+
+### Benefits
+- No more abbreviated/typo names from receipts
+- Clean, proper product names from external databases
+- Maintains single product (no duplicates)
+- Barcode linking works perfectly
+
 ## [2.15.2-beta] - 2025-11-23
 
 ### Fixed
