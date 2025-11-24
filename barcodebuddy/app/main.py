@@ -69,8 +69,8 @@ recent_scans = []
 # Starts at 0, defaults to 1 if no quantity barcode scanned
 current_quantity = 0.0
 
-# Current mode: 'add' or 'consume'
-current_mode = 'add'
+# Current mode: 'add' or 'consume' (from config)
+current_mode = config.scanner_default_mode
 
 def handle_barcode(barcode: str):
     """Handle scanned barcode with automatic product creation."""
@@ -378,5 +378,6 @@ if __name__ == '__main__':
     logger.info("🚀 Starting Barcode Buddy (Python)")
     logger.info(f"📱 Scanner: Auto-detecting all available devices")
     logger.info(f"🔗 Grocy: {'✅ Configured' if config.has_grocy else '❌ Not configured'}")
+    logger.info(f"📦 Default scanner mode: {current_mode.upper()} ({'➕ Adding to stock' if current_mode == 'add' else '➖ Consuming from stock'})")
 
     app.run(host='0.0.0.0', port=5000)

@@ -1,5 +1,5 @@
 name: "Barcode Buddy (Python)"
-version: "2.10.1"
+version: "2.11.0"
 slug: "barcodebuddy-python"
 description: "Python-based Barcode Scanner with Grocy integration"
 arch:
@@ -43,6 +43,9 @@ options:
   barcode_consume: "BBUDDY-CONSUME"
   barcode_quantity_prefix: "BBUDDY-Q-"
 
+  # Scanner Mode
+  scanner_default_mode: "add"  # Default mode: "add" or "consume"
+
   # Product Databases (for unknown barcodes)
   enable_openfoodfacts: true
   enable_upcdatabase: true
@@ -62,6 +65,9 @@ schema:
   barcode_add: str
   barcode_consume: str
   barcode_quantity_prefix: str
+
+  # Scanner Mode
+  scanner_default_mode: list(add|consume)
 
   # Product Databases
   enable_openfoodfacts: bool

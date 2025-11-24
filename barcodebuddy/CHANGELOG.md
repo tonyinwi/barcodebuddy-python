@@ -5,6 +5,25 @@ All notable changes to Barcode Buddy (Python) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.0] - 2025-11-24
+
+### Added
+- **Configurable Scanner Default Mode** - Choose default scanner behavior in add-on configuration
+  - New option: `scanner_default_mode` (values: "add" or "consume")
+  - Default mode: "add" (adds products to stock)
+  - Alternative mode: "consume" (removes products from stock)
+  - Mode can still be switched temporarily using BBUDDY-ADD/BBUDDY-CONSUME barcodes
+  - Startup log shows active default mode: `📦 Default scanner mode: ADD (➕ Adding to stock)`
+
+### How It Works
+Configure the default behavior in **Add-on Configuration**:
+- **"add"** (default): Scanner adds products to stock when scanned
+- **"consume"**: Scanner removes products from stock when scanned
+
+Perfect for different use cases:
+- **Add mode**: Ideal for receiving inventory, unpacking groceries
+- **Consume mode**: Ideal for consumption tracking, using products
+
 ## [2.10.1] - 2025-11-22
 
 ### Security

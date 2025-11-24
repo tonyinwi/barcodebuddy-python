@@ -73,3 +73,12 @@ class Config:
         if lang in ['en', 'de', 'fr', 'es']:
             return lang
         return 'en'  # Default fallback
+
+    @property
+    def scanner_default_mode(self) -> str:
+        """Get default scanner mode (add or consume)."""
+        mode = self._config.get('scanner_default_mode', 'add').strip().lower()
+        # Validate mode
+        if mode in ['add', 'consume']:
+            return mode
+        return 'add'  # Default fallback
