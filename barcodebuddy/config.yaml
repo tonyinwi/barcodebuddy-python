@@ -1,7 +1,10 @@
-name: "Barcode Buddy (Python) (beta)"
+name: "Barcode Buddy (Python) (fire-and-forget fork)"
 version: "2.18.2-beta"
+# slug is deliberately unchanged from upstream: Home Assistant identifies an
+# installed add-on by slug, so renaming it would orphan an existing install
+# and its configuration.
 slug: "barcodebuddy-python"
-description: "Python-based Barcode Scanner with Grocy integration"
+description: "Barcode Scanner with Grocy integration - fork: unknown barcodes are auto-created, not queued"
 arch:
   - armhf
   - armv7
