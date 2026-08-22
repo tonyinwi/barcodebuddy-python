@@ -262,35 +262,80 @@ def handle_barcode(barcode: str):
                         database_name = "UPC Database"
 
                 if external_product:
-                    # Step 4: Found in external database - add to pending for user decision
+                    # Step 4: Found in external database - auto-create and stock it.
+                    #
+                    # FORK PATCH #1 (fire-and-forget). Upstream parks the barcode in
+                    # pending_barcodes and waits for a UI decision. We never want the
+                    # scanner to block on a human: unknowns are created immediately as
+                    # raw products and cleaned up later by tools/grocy_normalize.py +
+                    # tools/grocy_review.py in the kitchen-stack repo.
                     product_name = external_product['name']
+                    amount = current_quantity if current_quantity > 0 else 1.0
 
-                    # Check if this barcode is already pending
-                    already_pending = any(p['barcode'] == barcode for p in pending_barcodes)
+                    # Grocy enforces UNIQUE on products.name, so a title we have already
+                    # seen under a different barcode must attach to the existing product
+                    # instead of failing the create. Same name = same product; this is
+                    # free dedup at intake.
+                    product_id = grocy_client.find_product_by_name(product_name)
+                    reused = product_id is not None
 
-                    if not already_pending:
-                        pending_item = {
-                            'barcode': barcode,
-                            'product_name': product_name,
-                            'database': database_name,
-                            'external_data': external_product,
-                            'timestamp': datetime.now().isoformat(),
-                            'quantity': current_quantity if current_quantity > 0 else 1.0,
-                            'mode': current_mode
-                        }
-                        pending_barcodes.insert(0, pending_item)
-
-                        # Keep only last 20 pending items
-                        if len(pending_barcodes) > 20:
-                            pending_barcodes.pop()
-
-                        logger.info(f"⏸️  Found '{product_name}' in {database_name} - added to pending (waiting for user decision)")
-                        scan_result['status'] = 'pending'
-                        scan_result['message'] = f"⏸️  Found in {database_name}: {product_name} - Check UI to select product"
-                        current_quantity = 0.0  # Reset after adding to pending
+                    if reused:
+                        logger.info(f"🔗 '{product_name}' already exists (ID {product_id}) - attaching barcode {barcode}")
                     else:
-                        scan_result['status'] = 'pending'
-                        scan_result['message'] = f"⏸️  Already pending: {product_name}"
+                        # A CONSUME scan of an unknown means "gone and needed". Grocy
+                        # cannot hold negative stock -- ConsumeProduct() throws when the
+                        # amount exceeds current stock and there is no override setting --
+                        # so the reorder signal is expressed as a minimum instead: the
+                        # product lands at 0 stock with min_stock_amount 1, which puts it
+                        # in GetMissingProducts and onto the shopping list.
+                        min_stock = 0 if current_mode == 'add' else 1
+                        product_id = grocy_client.create_product(
+                            product_name,
+                            description=f"Auto-created via Barcode Buddy from {database_name}",
+                            min_stock_amount=min_stock
+                        )
+
+                    if not product_id:
+                        scan_result['status'] = 'error'
+                        scan_result['message'] = f"❌ Failed to create: {product_name}"
+                        logger.error(f"❌ Could not create product '{product_name}' for barcode {barcode}")
+                    else:
+                        if not grocy_client.add_barcode_to_product(product_id, barcode):
+                            logger.warning(f"Product {product_id} ready but failed to attach barcode {barcode}")
+
+                        if current_mode == 'add':
+                            success = grocy_client.add_product(product_id, amount)
+                            if success:
+                                quantity_text = f" ({amount}x)" if amount != 1 else ""
+                                scan_result['status'] = 'success'
+                                scan_result['message'] = f"✨ ➕ Created '{product_name}' from {database_name}{quantity_text}"
+                                logger.info(f"✨ Created and added '{product_name}' (ID {product_id}, quantity: {amount})")
+                                current_quantity = 0.0
+                            else:
+                                scan_result['status'] = 'error'
+                                scan_result['message'] = f"❌ Created '{product_name}' but failed to add stock"
+                        elif reused:
+                            # Existing product may hold stock, so a real consume is valid.
+                            # If it is already at 0 Grocy rejects this, exactly as it would
+                            # for any known product scanned in consume mode.
+                            success = grocy_client.consume_product(product_id, amount)
+                            if success:
+                                quantity_text = f" ({amount}x)" if amount != 1 else ""
+                                scan_result['status'] = 'success'
+                                scan_result['message'] = f"➖ Removed: {product_name}{quantity_text}"
+                                logger.info(f"➖ Consumed '{product_name}' (ID {product_id}, quantity: {amount})")
+                                current_quantity = 0.0
+                            else:
+                                scan_result['status'] = 'error'
+                                scan_result['message'] = f"❌ Failed to remove: {product_name} (no stock?)"
+                        else:
+                            # Brand-new product sits at 0 stock with min_stock_amount 1.
+                            # Consuming would throw, and there is nothing to draw down --
+                            # the minimum already carries the "needs reorder" signal.
+                            scan_result['status'] = 'success'
+                            scan_result['message'] = f"✨ ➖ Created '{product_name}' from {database_name} - flagged for reorder"
+                            logger.info(f"✨ Created '{product_name}' (ID {product_id}) at 0 stock, min_stock_amount=1 (reorder)")
+                            current_quantity = 0.0
                 else:
                     # Not found anywhere
                     scan_result['status'] = 'not_found'
@@ -361,8 +406,18 @@ def create_product():
         return jsonify({'success': False, 'error': 'Grocy not configured'}), 400
 
     try:
-        # Create product in Grocy
-        product_id = grocy_client.create_product(product_name, description=f"Created via Barcode Buddy")
+        # Create product in Grocy.
+        #
+        # FORK PATCH #1 (fire-and-forget), same reasoning as the scan path above:
+        # a consume of a product that does not exist yet means "gone and needed",
+        # and Grocy cannot hold negative stock. Create it at 0 with a reorder
+        # point rather than attempting a consume that ConsumeProduct() rejects.
+        min_stock = 0 if current_mode == 'add' else 1
+        product_id = grocy_client.create_product(
+            product_name,
+            description=f"Created via Barcode Buddy",
+            min_stock_amount=min_stock
+        )
         if not product_id:
             return jsonify({'success': False, 'error': 'Failed to create product in Grocy'}), 500
 
@@ -377,19 +432,27 @@ def create_product():
             success = grocy_client.add_product(product_id, amount)
             action_text = "Added"
         else:  # consume mode
-            success = grocy_client.consume_product(product_id, amount)
-            action_text = "Removed"
+            # Upstream called consume_product() here, which always failed: a
+            # freshly created product has 0 stock, so consuming any amount trips
+            # "Amount to be consumed cannot be > current stock amount".
+            success = True
+            action_text = None  # nothing was booked; the reorder point carries it
 
         if success:
             # Reset quantity after successful operation
             current_quantity = 0.0
+
+            if action_text is None:
+                outcome = "flagged for reorder (0 stock, min 1)"
+            else:
+                outcome = f"{action_text.lower()} {amount}x to stock"
 
             # Create scan result
             scan_result = {
                 'barcode': barcode,
                 'timestamp': __import__('datetime').datetime.now().isoformat(),
                 'status': 'success',
-                'message': f"✨ Created '{product_name}' and {action_text.lower()} {amount}x to stock"
+                'message': f"✨ Created '{product_name}' and {outcome}"
             }
 
             # Store in recent scans
@@ -397,7 +460,7 @@ def create_product():
             if len(recent_scans) > 50:
                 recent_scans.pop()
 
-            logger.info(f"✨ Created product '{product_name}' (ID: {product_id}) and {action_text.lower()} {amount}x")
+            logger.info(f"✨ Created product '{product_name}' (ID: {product_id}) and {outcome}")
 
             return jsonify({'success': True, 'product_id': product_id, 'product_name': product_name})
         else:
@@ -616,7 +679,16 @@ def resolve_pending():
             external_data = pending_item['external_data']
             description = f"{external_data.get('brand', '')} - {external_data.get('quantity', '')}".strip(' -')
 
-            product_id = grocy_client.create_product(product_name, description)
+            amount = pending_item['quantity']
+            mode = pending_item['mode']
+
+            # FORK PATCH #1 (fire-and-forget), same reasoning as the scan path:
+            # resolving a pending item in consume mode means "gone and needed",
+            # and a product created here has 0 stock. Carry that as a reorder
+            # point instead of a consume ConsumeProduct() would reject.
+            min_stock = 1 if mode != 'add' else 0
+            product_id = grocy_client.create_product(product_name, description,
+                                                     min_stock_amount=min_stock)
             if not product_id:
                 return jsonify({'success': False, 'error': 'Failed to create product in Grocy'}), 500
 
@@ -625,15 +697,13 @@ def resolve_pending():
                 return jsonify({'success': False, 'error': 'Product created but failed to add barcode'}), 500
 
             # Add to stock
-            amount = pending_item['quantity']
-            mode = pending_item['mode']
-
             if mode == 'add':
                 success = grocy_client.add_product(product_id, amount)
                 action_text = "Added"
             else:
-                success = grocy_client.consume_product(product_id, amount)
-                action_text = "Removed"
+                # Upstream consumed here, which always failed on a fresh product.
+                success = True
+                action_text = "Flagged for reorder"
 
             if not success:
                 return jsonify({'success': False, 'error': f'Product created but failed to {action_text.lower()} to stock'}), 500

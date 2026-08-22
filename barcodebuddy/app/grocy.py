@@ -146,9 +146,34 @@ class GrocyClient:
             return qu_id
         return 1  # Fallback to 1
 
-    def create_product(self, name: str, description: str = "") -> Optional[int]:
+    def find_product_by_name(self, name: str) -> Optional[int]:
+        """
+        Find a product by its exact name (case-insensitive).
+
+        Grocy enforces UNIQUE on products.name, so a name collision on create
+        is not an error to retry but a signal that the product already exists.
+
+        Returns the product ID if found, None otherwise.
+        """
+        products = self.get_all_products()
+        if not products:
+            return None
+
+        target = name.strip().lower()
+        for product in products:
+            if str(product.get('name', '')).strip().lower() == target:
+                return product.get('id')
+        return None
+
+    def create_product(self, name: str, description: str = "",
+                       min_stock_amount: float = 0) -> Optional[int]:
         """
         Create a new product in Grocy.
+
+        min_stock_amount sets the reorder point. A product at 0 stock with a
+        minimum of 1 is counted by Grocy's GetMissingProducts and can be
+        auto-added to the shopping list, which is how "gone and needed" is
+        expressed -- Grocy cannot hold negative stock.
 
         Returns the product ID if successful, None otherwise.
         """
@@ -162,7 +187,8 @@ class GrocyClient:
             'description': description,
             'location_id': location_id,
             'qu_id_purchase': qu_id,
-            'qu_id_stock': qu_id
+            'qu_id_stock': qu_id,
+            'min_stock_amount': min_stock_amount
         }
         result = self._request('POST', 'objects/products', json=data)
         if result and 'created_object_id' in result:
