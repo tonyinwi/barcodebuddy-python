@@ -162,7 +162,8 @@ class GrocyClient:
         target = name.strip().lower()
         for product in products:
             if str(product.get('name', '')).strip().lower() == target:
-                return product.get('id')
+                product_id = product.get('id')
+                return int(product_id) if product_id is not None else None
         return None
 
     def create_product(self, name: str, description: str = "",
@@ -192,7 +193,10 @@ class GrocyClient:
         }
         result = self._request('POST', 'objects/products', json=data)
         if result and 'created_object_id' in result:
-            product_id = result['created_object_id']
+            # Grocy returns created_object_id as a string but reports ids as ints
+            # everywhere else. Normalise so callers can compare the result of this
+            # against find_product_by_name() without a type mismatch.
+            product_id = int(result['created_object_id'])
             logger.info(f"✅ Created product in Grocy: {name} (ID: {product_id})")
             return product_id
         return None
