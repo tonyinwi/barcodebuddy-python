@@ -99,6 +99,45 @@ class GrocyClient:
         result = self._request('GET', f'stock/products/by-barcode/{barcode}')
         return result
 
+    def external_lookup(self, barcode: str) -> Optional[Dict[Any, Any]]:
+        """
+        Look up an unknown barcode via Grocy's own external lookup plugin.
+
+        This delegates to whatever STOCK_BARCODE_LOOKUP_PLUGIN is configured in
+        Grocy (e.g. UPCitemdb), which means lookup behaviour is tuned in one
+        place -- Grocy -- rather than duplicated in this add-on.
+
+        add=false so Grocy resolves the barcode WITHOUT creating anything: this
+        add-on does its own create so it can handle name collisions and set a
+        reorder point. (add=true would also throw on a duplicate product name.)
+
+        Returns a dict in the same shape as the other lookup clients, with the
+        Grocy-native product fields carried alongside. Grocy resolves those
+        against the user's "presets for new products", so they are more correct
+        than this client's first-location/first-unit fallbacks.
+
+        Returns None when the plugin finds nothing (Grocy returns null) or when
+        no lookup plugin is configured.
+        """
+        result = self._request('GET',
+                               f'stock/barcodes/external-lookup/{barcode}?add=false')
+        if not result or not isinstance(result, dict) or not result.get('name'):
+            logger.info(f"❌ Not found via Grocy external lookup: {barcode}")
+            return None
+
+        logger.info(f"✅ Found via Grocy external lookup: {result['name']}")
+        return {
+            'name': result['name'],
+            'barcode': barcode,
+            'brand': '',
+            'quantity': '',
+            'image_url': result.get('__image_url', ''),
+            # Grocy-native fields, already resolved against the user's presets.
+            'location_id': result.get('location_id'),
+            'qu_id_purchase': result.get('qu_id_purchase'),
+            'qu_id_stock': result.get('qu_id_stock'),
+        }
+
     def add_product(self, product_id: int, amount: float = 1.0) -> bool:
         """Add product to stock."""
         data = {
@@ -167,7 +206,9 @@ class GrocyClient:
         return None
 
     def create_product(self, name: str, description: str = "",
-                       min_stock_amount: float = 0) -> Optional[int]:
+                       min_stock_amount: float = 0,
+                       location_id=None, qu_id_purchase=None,
+                       qu_id_stock=None) -> Optional[int]:
         """
         Create a new product in Grocy.
 
@@ -176,19 +217,29 @@ class GrocyClient:
         auto-added to the shopping list, which is how "gone and needed" is
         expressed -- Grocy cannot hold negative stock.
 
+        location_id / qu_id_* override the fallbacks below. Pass the values from
+        external_lookup(): Grocy resolves those against the user's "presets for
+        new products", whereas the fallbacks here just take whatever location and
+        unit happen to sort first, which is usually the wrong shelf.
+
         Returns the product ID if successful, None otherwise.
         """
-        # Get default IDs from Grocy
-        location_id = self.get_default_location_id()
-        qu_id = self.get_default_quantity_unit_id()
+        # Fall back to the first location / unit only when the caller has nothing
+        # better. Anything from Grocy's own lookup is preferred.
+        if location_id is None:
+            location_id = self.get_default_location_id()
+        if qu_id_purchase is None or qu_id_stock is None:
+            default_qu_id = self.get_default_quantity_unit_id()
+            qu_id_purchase = qu_id_purchase if qu_id_purchase is not None else default_qu_id
+            qu_id_stock = qu_id_stock if qu_id_stock is not None else default_qu_id
 
         # Required fields for product creation
         data = {
             'name': name,
             'description': description,
             'location_id': location_id,
-            'qu_id_purchase': qu_id,
-            'qu_id_stock': qu_id,
+            'qu_id_purchase': qu_id_purchase,
+            'qu_id_stock': qu_id_stock,
             'min_stock_amount': min_stock_amount
         }
         result = self._request('POST', 'objects/products', json=data)

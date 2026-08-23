@@ -11,6 +11,16 @@ class OpenFoodFactsClient:
 
     BASE_URL = "https://world.openfoodfacts.org/api/v2"
 
+    # OpenFoodFacts rejects the requests library's default User-Agent
+    # ("python-requests/x.y.z") with HTTP 403 -- it blocks generic scraper
+    # agents and expects a header identifying the application. Without this,
+    # EVERY lookup fails, and because the caller only sees None the failure is
+    # indistinguishable from "barcode genuinely not in the database".
+    HEADERS = {
+        'User-Agent': 'BarcodeBuddy-Python/2.18 '
+                      '(https://github.com/tonyinwi/barcodebuddy-python)'
+    }
+
     def lookup_barcode(self, barcode: str) -> Optional[Dict[Any, Any]]:
         """
         Look up a barcode in OpenFoodFacts database.
@@ -21,7 +31,7 @@ class OpenFoodFactsClient:
             url = f"{self.BASE_URL}/product/{barcode}.json"
             logger.info(f"Looking up barcode in OpenFoodFacts: {barcode}")
 
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, timeout=10, headers=self.HEADERS)
             response.raise_for_status()
 
             data = response.json()

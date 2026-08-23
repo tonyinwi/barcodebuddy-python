@@ -246,10 +246,22 @@ def handle_barcode(barcode: str):
             if not alias_found:
                 logger.info(f"🔍 Not in aliases, checking external databases...")
 
-                # Try databases in order: OpenFoodFacts → UPC Database
-                # Only query databases that are enabled in configuration
+                # Try databases in order: Grocy's own lookup plugin → OpenFoodFacts
+                # → UPC Database. Only query databases enabled in configuration.
+                #
+                # Grocy leads deliberately. Its STOCK_BARCODE_LOOKUP_PLUGIN (e.g.
+                # UPCitemdb) is US-focused where OpenFoodFacts is weakest, it is
+                # tuned in one place rather than duplicated here, and it resolves
+                # the product against the user's "presets for new products" so the
+                # item lands on the right shelf. It is not a replacement though --
+                # it is thin on imported goods, so the others stay as fallbacks.
                 external_product = None
                 database_name = None
+
+                if grocy_client and not external_product:
+                    external_product = grocy_client.external_lookup(barcode)
+                    if external_product:
+                        database_name = "Grocy lookup plugin"
 
                 if config.enable_openfoodfacts and not external_product:
                     external_product = openfoodfacts_client.lookup_barcode(barcode)
@@ -289,10 +301,16 @@ def handle_barcode(barcode: str):
                         # product lands at 0 stock with min_stock_amount 1, which puts it
                         # in GetMissingProducts and onto the shopping list.
                         min_stock = 0 if current_mode == 'add' else 1
+                        # Grocy's own lookup supplies location/unit resolved against
+                        # the user's presets; the other sources supply nothing, and
+                        # create_product() falls back for those.
                         product_id = grocy_client.create_product(
                             product_name,
                             description=f"Auto-created via Barcode Buddy from {database_name}",
-                            min_stock_amount=min_stock
+                            min_stock_amount=min_stock,
+                            location_id=external_product.get('location_id'),
+                            qu_id_purchase=external_product.get('qu_id_purchase'),
+                            qu_id_stock=external_product.get('qu_id_stock')
                         )
 
                     if not product_id:
