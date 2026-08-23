@@ -361,10 +361,60 @@ def handle_barcode(barcode: str):
                             logger.info(f"✨ Created '{product_name}' (ID {product_id}) at 0 stock, min_stock_amount=1 (reorder)")
                             current_quantity = 0.0
                 else:
-                    # Not found anywhere
-                    scan_result['status'] = 'not_found'
-                    scan_result['message'] = f"❓ Barcode not found in Grocy, aliases, OpenFoodFacts, or UPC Database"
-                    logger.warning(f"❓ Barcode {barcode} not found in any database")
+                    # Step 5: Not found anywhere -- create a placeholder anyway.
+                    #
+                    # FORK PATCH #1 (fire-and-forget), final branch. Upstream stops
+                    # here and asks for a product name, which is the last thing in
+                    # the flow that blocks on a human standing at the pantry. Some
+                    # barcodes are in no database at all -- store brands, local
+                    # products, anything without a GS1 listing -- so no amount of
+                    # lookup tuning removes this case.
+                    #
+                    # The name is deliberately useless: naming it properly is the
+                    # cleanup pipeline's job, and it was always going to be renamed
+                    # anyway. "Unknown <barcode>" is inherently unique, so it cannot
+                    # collide on Grocy's UNIQUE products.name the way a real title
+                    # can, and it carries the barcode for whoever reviews it later.
+                    product_name = f"Unknown {barcode}"
+                    amount = current_quantity if current_quantity > 0 else 1.0
+
+                    product_id = grocy_client.find_product_by_name(product_name)
+                    if product_id:
+                        logger.info(f"🔗 Placeholder '{product_name}' already exists (ID {product_id})")
+                    else:
+                        min_stock = 0 if current_mode == 'add' else 1
+                        product_id = grocy_client.create_product(
+                            product_name,
+                            description="Auto-created via Barcode Buddy - not found in any database",
+                            min_stock_amount=min_stock
+                        )
+
+                    if not product_id:
+                        scan_result['status'] = 'error'
+                        scan_result['message'] = f"❌ Failed to create placeholder for {barcode}"
+                        logger.error(f"❌ Could not create placeholder product for barcode {barcode}")
+                    else:
+                        # No brand to record -- nothing resolved it. Source says so,
+                        # which tells the reviewer this name came from nowhere rather
+                        # than from a database that got it wrong.
+                        grocy_client.add_barcode_to_product(product_id, barcode,
+                                                            source='not found')
+
+                        if current_mode == 'add':
+                            if grocy_client.add_product(product_id, amount):
+                                quantity_text = f" ({amount}x)" if amount != 1 else ""
+                                scan_result['status'] = 'success'
+                                scan_result['message'] = f"❓ ➕ Unknown barcode - created placeholder{quantity_text}, needs naming"
+                                logger.info(f"❓ Created placeholder '{product_name}' (ID {product_id}, quantity: {amount})")
+                                current_quantity = 0.0
+                            else:
+                                scan_result['status'] = 'error'
+                                scan_result['message'] = f"❌ Created placeholder for {barcode} but failed to add stock"
+                        else:
+                            scan_result['status'] = 'success'
+                            scan_result['message'] = f"❓ ➖ Unknown barcode - placeholder flagged for reorder, needs naming"
+                            logger.info(f"❓ Created placeholder '{product_name}' (ID {product_id}) at 0 stock, min_stock_amount=1 (reorder)")
+                            current_quantity = 0.0
     else:
         scan_result['status'] = 'no_grocy'
         scan_result['message'] = f"📦 Scanned (no Grocy configured)"
