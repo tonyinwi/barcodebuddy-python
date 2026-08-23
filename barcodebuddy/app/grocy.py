@@ -288,6 +288,16 @@ class GrocyClient:
             # against find_product_by_name() without a type mismatch.
             product_id = int(result['created_object_id'])
             logger.info(f"✅ Created product in Grocy: {name} (ID: {product_id})")
+
+            # Tag it for the cleanup pipeline. The name here is whatever the
+            # lookup returned -- a raw title, not how a recipe would name it --
+            # so it needs review before it is trustworthy. Marking this
+            # explicitly makes the state visible in Grocy's UI instead of being
+            # inferred from a blank field.
+            #
+            # tools/grocy_normalize.py in kitchen-stack treats both "" and "raw"
+            # as unreviewed; do not narrow that without changing this.
+            self.set_userfields('products', product_id, {'review_status': 'raw'})
             return product_id
         return None
 
