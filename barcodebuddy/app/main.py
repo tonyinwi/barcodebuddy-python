@@ -7,7 +7,7 @@ import os
 import requests
 from config import Config
 from grocy import GrocyClient
-from scanner import ScannerHandler
+from scanner import ScannerHandler, device_usb_id
 from openfoodfacts import OpenFoodFactsClient
 from upcdatabase import UPCDatabaseClient
 from alias_client import AliasClient
@@ -88,11 +88,48 @@ current_quantity = 0.0
 # Current mode: 'add' or 'consume'
 current_mode = 'add'
 
-def handle_barcode(barcode: str):
+def resolve_scan_mode(device: str = None) -> str:
+    """
+    Decide whether THIS scan means ADD or CONSUME.
+
+    FORK PATCH #2 (per-device scanner mode). The mode is a property of the gun
+    you picked up, not a global toggle you have to remember the state of. One
+    scanner lives where shopping is unpacked and always means ADD; the other
+    lives by the bin and always means CONSUME -- which is the moment
+    consumption is unambiguous, because you are throwing the thing away
+    precisely because it is empty.
+
+    That retires the stateful toggle and its failure mode: scanning ten items
+    in the wrong mode produces ten wrong stock movements and no error.
+
+    Falls back to the global mode when the device is unknown, unbound, or
+    cannot be resolved -- so an unconfigured setup behaves exactly as before,
+    and the ADD/CONSUME barcodes still work.
+    """
+    if not device:
+        return current_mode
+
+    usb = device_usb_id(device)
+    if not usb:
+        return current_mode
+
+    if usb == config.scanner_add_device:
+        return 'add'
+    if usb == config.scanner_consume_device:
+        return 'consume'
+    return current_mode
+
+
+def handle_barcode(barcode: str, device: str = None):
     """Handle scanned barcode with automatic product creation."""
     global current_quantity, current_mode
 
     logger.info(f"📦 Processing barcode: {barcode}")
+
+    # Which gun was this? Decides ADD vs CONSUME for this scan only.
+    mode = resolve_scan_mode(device)
+    if device and mode != current_mode:
+        logger.info(f"🔫 Device {device} is bound to {mode.upper()} (global is {current_mode.upper()})")
 
     scan_result = {
         'barcode': barcode,
@@ -183,7 +220,7 @@ def handle_barcode(barcode: str):
                 amount = current_quantity if current_quantity > 0 else 1.0
 
                 # Add or consume based on current mode
-                if current_mode == 'add':
+                if mode == 'add':
                     success = grocy_client.add_product(product_id, amount)
                     action_emoji = "➕"
                     action_text = "Added"
@@ -223,7 +260,7 @@ def handle_barcode(barcode: str):
                     amount = current_quantity if current_quantity > 0 else 1.0
 
                     # Add or consume based on current mode
-                    if current_mode == 'add':
+                    if mode == 'add':
                         success = grocy_client.add_product(product_id, amount)
                         action_emoji = "➕"
                         action_text = "Added"
@@ -300,7 +337,7 @@ def handle_barcode(barcode: str):
                         # so the reorder signal is expressed as a minimum instead: the
                         # product lands at 0 stock with min_stock_amount 1, which puts it
                         # in GetMissingProducts and onto the shopping list.
-                        min_stock = 0 if current_mode == 'add' else 1
+                        min_stock = 0 if mode == 'add' else 1
                         # Grocy's own lookup supplies location/unit resolved against
                         # the user's presets; the other sources supply nothing, and
                         # create_product() falls back for those.
@@ -327,7 +364,7 @@ def handle_barcode(barcode: str):
                                 source=database_name or ''):
                             logger.warning(f"Product {product_id} ready but failed to attach barcode {barcode}")
 
-                        if current_mode == 'add':
+                        if mode == 'add':
                             success = grocy_client.add_product(product_id, amount)
                             if success:
                                 quantity_text = f" ({amount}x)" if amount != 1 else ""
@@ -382,7 +419,7 @@ def handle_barcode(barcode: str):
                     if product_id:
                         logger.info(f"🔗 Placeholder '{product_name}' already exists (ID {product_id})")
                     else:
-                        min_stock = 0 if current_mode == 'add' else 1
+                        min_stock = 0 if mode == 'add' else 1
                         product_id = grocy_client.create_product(
                             product_name,
                             description="Auto-created via Barcode Buddy - not found in any database",
@@ -400,7 +437,7 @@ def handle_barcode(barcode: str):
                         grocy_client.add_barcode_to_product(product_id, barcode,
                                                             source='not found')
 
-                        if current_mode == 'add':
+                        if mode == 'add':
                             if grocy_client.add_product(product_id, amount):
                                 quantity_text = f" ({amount}x)" if amount != 1 else ""
                                 scan_result['status'] = 'success'

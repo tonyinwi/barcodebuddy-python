@@ -45,6 +45,11 @@ options:
   paperless_grocy_magic_url: ""
   enable_alias_integration: true
 
+  # Per-device scanner mode (fork). USB "vendor:product" of each gun, e.g.
+  # "0581:011a". Leave empty to fall back to the global ADD/CONSUME toggle.
+  scanner_add_device: ""
+  scanner_consume_device: ""
+
   # Barcode Configuration
   barcode_add: "BBUDDY-ADD"
   barcode_consume: "BBUDDY-CONSUME"
@@ -71,6 +76,10 @@ schema:
   # Paperless Grocy Magic Integration
   paperless_grocy_magic_url: str
   enable_alias_integration: bool
+
+  # Per-device scanner mode (fork)
+  scanner_add_device: str?
+  scanner_consume_device: str?
 
   # Barcode Configuration
   barcode_add: str

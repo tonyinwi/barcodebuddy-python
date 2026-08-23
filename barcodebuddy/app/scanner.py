@@ -8,6 +8,35 @@ import time
 logger = logging.getLogger(__name__)
 
 
+def device_usb_id(device_path: str) -> Optional[str]:
+    """
+    Resolve a scanner device to its USB "vendor:product" id, lowercase.
+
+    Reads HID_ID out of sysfs, e.g. "0003:00000581:0000011A" -> "0581:011a".
+    This is how a scan is attributed to a physical gun: the mode is bound to
+    the USB device, not to the hidraw node, because a single scanner exposes
+    several HID interfaces and the node numbering shifts when things are
+    replugged.
+
+    Returns None if it cannot be determined -- callers must fall back to the
+    global mode rather than guessing.
+    """
+    name = os.path.basename(device_path)
+    for uevent in (f"/sys/class/hidraw/{name}/device/uevent",
+                   f"/sys/class/input/{name}/device/uevent"):
+        try:
+            with open(uevent, "r") as f:
+                for line in f:
+                    if line.startswith("HID_ID="):
+                        parts = line.strip().split("=", 1)[1].split(":")
+                        if len(parts) == 3:
+                            return f"{int(parts[1], 16):04x}:{int(parts[2], 16):04x}"
+        except Exception:
+            continue
+    logger.debug(f"Could not resolve USB id for {device_path}")
+    return None
+
+
 class ScannerHandler:
     """Handle multiple USB barcode scanners via hidraw."""
 
@@ -23,7 +52,7 @@ class ScannerHandler:
         45: '-', 46: '=', 47: '[', 48: ']',
     }
 
-    def __init__(self, device_path: str, callback: Callable[[str], None]):
+    def __init__(self, device_path: str, callback: Callable[[str, str], None]):
         self.device_path = device_path  # Kept for compatibility, but not used
         self.callback = callback
         self.running = False
@@ -162,7 +191,7 @@ class ScannerHandler:
                             if self._barcode_buffers[device]:
                                 barcode = self._barcode_buffers[device]
                                 logger.info(f"📦 Barcode from {device}: {barcode}")
-                                self.callback(barcode)
+                                self.callback(barcode, device)
                                 self._barcode_buffers[device] = ""
                             continue
 
@@ -208,7 +237,7 @@ class ScannerHandler:
             if self._barcode_buffers.get(device):
                 barcode = self._barcode_buffers[device]
                 logger.info(f"📦 Barcode from {device}: {barcode}")
-                self.callback(barcode)
+                self.callback(barcode, device)
                 self._barcode_buffers[device] = ""
             return
 

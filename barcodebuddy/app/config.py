@@ -61,6 +61,25 @@ class Config:
         return self._config.get('enable_openfoodfacts', True)
 
     @property
+    def scanner_add_device(self) -> str:
+        """
+        USB "vendor:product" of the gun that always means ADD, e.g. "0581:011a".
+
+        Binding the mode to a physical scanner removes the stateful ADD/CONSUME
+        toggle, which is the failure that corrupts data silently: scan ten items
+        in the wrong mode and you get ten wrong movements with no error. The gun
+        you pick up IS the mode.
+
+        Empty means no binding -- that device falls back to the global mode.
+        """
+        return str(self._config.get('scanner_add_device', '') or '').strip().lower()
+
+    @property
+    def scanner_consume_device(self) -> str:
+        """USB "vendor:product" of the gun that always means CONSUME."""
+        return str(self._config.get('scanner_consume_device', '') or '').strip().lower()
+
+    @property
     def enable_upcdatabase(self) -> bool:
         """Check if UPC Database is enabled."""
         return self._config.get('enable_upcdatabase', True)
