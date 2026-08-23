@@ -129,7 +129,10 @@ class GrocyClient:
         return {
             'name': result['name'],
             'barcode': barcode,
-            'brand': '',
+            # __brand is a non-standard key added by the UPCitemdb plugin in the
+            # kitchen-stack repo. Grocy passes plugin output through untouched on
+            # add=false, so it survives; absent with any other lookup plugin.
+            'brand': result.get('__brand', ''),
             'quantity': '',
             'image_url': result.get('__image_url', ''),
             # Grocy-native fields, already resolved against the user's presets.
@@ -288,21 +291,54 @@ class GrocyClient:
             return product_id
         return None
 
-    def add_barcode_to_product(self, product_id: int, barcode: str) -> bool:
+    def set_userfields(self, entity: str, object_id, fields: Dict[str, Any]) -> bool:
+        """
+        Set userfield values on a Grocy object.
+
+        Silently no-ops on an empty payload. Userfields must already exist in
+        Grocy (created by tools/grocy_normalize.py --setup in kitchen-stack); if
+        one does not, Grocy rejects the whole call, so this logs and moves on
+        rather than failing the scan around it.
+        """
+        fields = {k: v for k, v in fields.items() if v not in (None, '')}
+        if not fields:
+            return True
+
+        result = self._request('PUT', f'userfields/{entity}/{object_id}', json=fields)
+        if result is not None:
+            logger.info(f"✅ Set userfields on {entity}/{object_id}: {fields}")
+            return True
+        logger.warning(f"Could not set userfields on {entity}/{object_id}: {fields}")
+        return False
+
+    def add_barcode_to_product(self, product_id: int, barcode: str,
+                               brand: str = '', source: str = '') -> bool:
         """
         Add a barcode to an existing product.
 
-        Returns True if successful, False otherwise.
+        brand and source are stored as userfields on the barcode row, not on the
+        product. Brand is a barcode attribute in this data model: the generic
+        product stays the source of truth so any variant satisfies a recipe,
+        while each scanned barcode records which brand it actually was.
+
+        Returns True if the barcode was added. Userfield failures are logged but
+        do not fail the call -- the barcode mapping is what matters.
         """
         data = {
             'product_id': product_id,
             'barcode': barcode
         }
         result = self._request('POST', 'objects/product_barcodes', json=data)
-        if result:
-            logger.info(f"✅ Added barcode {barcode} to product {product_id}")
-            return True
-        return False
+        if not result:
+            return False
+
+        logger.info(f"✅ Added barcode {barcode} to product {product_id}")
+
+        barcode_id = result.get('created_object_id')
+        if barcode_id and (brand or source):
+            self.set_userfields('product_barcodes', barcode_id,
+                                {'brand': brand, 'source': source})
+        return True
 
     def update_product_name(self, product_id: int, new_name: str) -> bool:
         """

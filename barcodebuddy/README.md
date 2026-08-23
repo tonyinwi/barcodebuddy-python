@@ -236,8 +236,14 @@ name differs only by case or whitespace.
 
 ## 📝 Version History
 
-Add-on version is **2.18.2-beta** (see [CHANGELOG.md](../CHANGELOG.md) for full upstream
-history — the table below is a summary of milestone releases, not every version).
+Add-on version is **2.18.2-beta**. See **[CHANGELOG.md](CHANGELOG.md)** — that is the
+authoritative history for this add-on, and fork changes are listed at the top under
+*Fork: fire-and-forget*.
+
+> The repo-root `../CHANGELOG.md` tracks the `main` branch lineage and stops at
+> 2.11.1-beta, so it is stale for this add-on. Use the one alongside this README.
+
+The table below is a summary of milestone releases, not every version.
 
 | Version | Key Feature |
 |---------|-------------|

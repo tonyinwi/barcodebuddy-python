@@ -5,6 +5,78 @@ All notable changes to Barcode Buddy (Python) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+---
+
+# Fork: fire-and-forget
+
+Changes below this heading are **not upstream**. They belong to the
+[tonyinwi/barcodebuddy-python](https://github.com/tonyinwi/barcodebuddy-python)
+fork, branched from `sitaro/barcodebuddy-python@e76a458` (2.18.2-beta). Upstream's
+own history resumes at the next divider.
+
+## [fork] - 2026-08-23
+
+### Added
+- **Brand and lookup source recorded on the barcode.** Each scanned barcode now
+  stores the brand it resolved to, plus which database answered, as `brand` /
+  `source` userfields on the `product_barcodes` row. Brand is deliberately a
+  *barcode* attribute, not a product one: the generic product stays the source of
+  truth so any variant satisfies a recipe, while each barcode remembers what was
+  actually on the shelf. New `set_userfields()` helper; `add_barcode_to_product()`
+  gained `brand` / `source` arguments. Userfield failures are logged, never fatal
+  to a scan.
+- **Grocy's own lookup plugin leads the lookup chain** (`ad770cc`). Order is now
+  Grocy → OpenFoodFacts → UPC Database, called with `add=false` so Grocy resolves
+  without creating; this add-on still does its own create, which is what handles
+  name collisions and reorder points. Grocy is US-focused and thin on imported
+  goods, so the other two remain fallbacks rather than being replaced.
+- **Auto-create on unknown barcode** (`8d5c6e3`) — the fork's reason to exist.
+  Unknown barcodes are created immediately instead of parking in a pending queue.
+  The name is looked up first, since Grocy enforces `UNIQUE` on `products.name`,
+  so a title already seen under a different barcode attaches to the existing
+  product. Free dedup at intake.
+
+### Fixed
+- **Products no longer land in the wrong location** (`6d22700`). Location and
+  quantity unit came from whichever row sorted first, which on a typical setup is
+  a fridge — so shelf-stable goods were created in cold storage. Both now read
+  Grocy's "presets for new products", falling back to the old behaviour only when
+  a preset is unset.
+- **OpenFoodFacts lookups always failed** (`ad770cc`). OFF rejects the requests
+  library's default User-Agent with HTTP 403, and because the caller only sees
+  `None`, every failure was reported as "barcode not found in any database". Now
+  sends an identifying User-Agent.
+- **Create-then-consume always failed** (`8d5c6e3`) in `/api/create-product` and
+  `/api/pending/resolve`. Both created a product then immediately consumed from
+  it, which Grocy rejects: a new product has 0 stock and `ConsumeProduct()`
+  refuses any amount above current stock. A consume of an unknown now records a
+  reorder point instead of booking a consume.
+- **Product ids were inconsistently typed** (`4d5da2b`). `create_product()`
+  returned a string while `find_product_by_name()` returned an int, and the scan
+  path compares the two to decide whether it is reusing a product.
+
+### Changed
+- Add-on and repository renamed to identify the fork, so it is distinguishable
+  from upstream in the add-on store (`db71827`). Slug deliberately unchanged —
+  Home Assistant keys installs by slug, so renaming it orphans an existing
+  install and its configuration.
+- READMEs rewritten to document fork behaviour, the required Grocy setting, and
+  the deploy sequence (`82dcf82`).
+
+### Notes
+- **Requires** `shopping_list_auto_add_below_min_stock_amount` enabled in Grocy,
+  or the reorder signal stops at "missing products" and never reaches the
+  shopping list.
+- **Deploying needs `ha store reload` before `ha apps rebuild`** — rebuild alone
+  does not pull new commits. See `README.md`.
+- The `brand` / `source` / `preferred` userfields must exist on
+  `product_barcodes`; `tools/grocy_normalize.py --setup` in the kitchen-stack
+  repo creates them.
+- Brand via the Grocy lookup path additionally needs the UPCitemdb plugin to emit
+  `__brand` — a kitchen-stack change deployed separately to Grocy itself.
+
+---
+
 ## [2.18.2-beta] - 2025-11-23
 
 ### Fixed

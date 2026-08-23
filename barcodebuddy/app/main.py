@@ -318,7 +318,13 @@ def handle_barcode(barcode: str):
                         scan_result['message'] = f"❌ Failed to create: {product_name}"
                         logger.error(f"❌ Could not create product '{product_name}' for barcode {barcode}")
                     else:
-                        if not grocy_client.add_barcode_to_product(product_id, barcode):
+                        # Brand and lookup source are recorded on the BARCODE, not the
+                        # product: the product stays generic so any variant satisfies a
+                        # recipe, while each barcode remembers which brand it was.
+                        if not grocy_client.add_barcode_to_product(
+                                product_id, barcode,
+                                brand=external_product.get('brand', ''),
+                                source=database_name or ''):
                             logger.warning(f"Product {product_id} ready but failed to attach barcode {barcode}")
 
                         if current_mode == 'add':
