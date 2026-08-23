@@ -45,6 +45,9 @@ options:
   paperless_grocy_magic_url: ""
   enable_alias_integration: true
 
+  # Home Assistant webhook (fork). POSTed on every scan; empty disables it.
+  ha_webhook_url: ""
+
   # Per-device scanner mode (fork). USB "vendor:product" of each gun, e.g.
   # "0581:011a". Leave empty to fall back to the global ADD/CONSUME toggle.
   scanner_add_device: ""
@@ -76,6 +79,9 @@ schema:
   # Paperless Grocy Magic Integration
   paperless_grocy_magic_url: str
   enable_alias_integration: bool
+
+  # Home Assistant webhook (fork)
+  ha_webhook_url: str?
 
   # Per-device scanner mode (fork)
   scanner_add_device: str?

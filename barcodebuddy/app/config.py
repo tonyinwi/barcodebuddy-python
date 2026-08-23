@@ -61,6 +61,18 @@ class Config:
         return self._config.get('enable_openfoodfacts', True)
 
     @property
+    def ha_webhook_url(self) -> str:
+        """
+        Home Assistant webhook to POST each scan result to. Empty = disabled.
+
+        Barcode Buddy is a standalone Flask app with no HA integration, so
+        nothing downstream can react to a scan. This is the one wire out:
+        HA decides what a scan means (announce it, notify, log it) rather
+        than that policy living in here.
+        """
+        return str(self._config.get('ha_webhook_url', '') or '').strip()
+
+    @property
     def scanner_add_device(self) -> str:
         """
         USB "vendor:product" of the gun that always means ADD, e.g. "0581:011a".

@@ -5,6 +5,7 @@ import logging
 import sys
 import os
 import requests
+import threading
 from config import Config
 from grocy import GrocyClient
 from scanner import ScannerHandler, device_usb_id
@@ -88,6 +89,39 @@ current_quantity = 0.0
 # Current mode: 'add' or 'consume'
 current_mode = 'add'
 
+def notify_webhook(payload: dict):
+    """
+    POST a scan result to Home Assistant, fire-and-forget.
+
+    FORK PATCH #3. Deliberately cannot affect the scan: it runs on its own
+    thread, has a short timeout, and swallows every exception. A scanner that
+    stops working because Home Assistant is rebooting would be a far worse bug
+    than a missed announcement.
+
+    Everything is sent -- successes, errors, mode switches, quantity barcodes.
+    Filtering is HA's job, because that is where the policy is easy to change.
+    """
+    url = config.ha_webhook_url
+    if not url:
+        return
+
+    def _post():
+        try:
+            requests.post(url, json=payload, timeout=3)
+        except Exception as e:
+            logger.debug(f"Webhook POST failed (ignored): {e}")
+
+    threading.Thread(target=_post, daemon=True).start()
+
+
+def finish_scan(scan_result: dict):
+    """Record a scan in recent history and tell Home Assistant about it."""
+    recent_scans.insert(0, scan_result)
+    if len(recent_scans) > 50:
+        recent_scans.pop()
+    notify_webhook(scan_result)
+
+
 def resolve_scan_mode(device: str = None) -> str:
     """
     Decide whether THIS scan means ADD or CONSUME.
@@ -135,7 +169,11 @@ def handle_barcode(barcode: str, device: str = None):
         'barcode': barcode,
         'timestamp': datetime.now().isoformat(),
         'status': 'unknown',
-        'message': ''
+        'message': '',
+        # Structured fields so consumers need not parse the emoji text.
+        'mode': mode,
+        'product': None,
+        'device': device
     }
 
     # Check if this is a mode switch barcode
@@ -145,9 +183,7 @@ def handle_barcode(barcode: str, device: str = None):
         scan_result['message'] = f"➕ Mode: ADD (adding to stock)"
         logger.info(f"➕ Mode switched to: ADD")
         # Store and return
-        recent_scans.insert(0, scan_result)
-        if len(recent_scans) > 50:
-            recent_scans.pop()
+        finish_scan(scan_result)
         return
     elif barcode == config.barcode_consume:
         current_mode = 'consume'
@@ -155,9 +191,7 @@ def handle_barcode(barcode: str, device: str = None):
         scan_result['message'] = f"➖ Mode: CONSUME (removing from stock)"
         logger.info(f"➖ Mode switched to: CONSUME")
         # Store and return
-        recent_scans.insert(0, scan_result)
-        if len(recent_scans) > 50:
-            recent_scans.pop()
+        finish_scan(scan_result)
         return
 
     # Check if this is a quantity barcode
@@ -175,9 +209,7 @@ def handle_barcode(barcode: str, device: str = None):
             logger.error(f"Invalid quantity barcode: {barcode} - {e}")
 
         # Store scan result and return
-        recent_scans.insert(0, scan_result)
-        if len(recent_scans) > 50:
-            recent_scans.pop()
+        finish_scan(scan_result)
         return
 
     # Regular product barcode handling
@@ -193,6 +225,7 @@ def handle_barcode(barcode: str, device: str = None):
             if 'product' in product and isinstance(product['product'], dict):
                 product_id = product['product'].get('id')
                 product_name = product['product'].get('name', 'Unknown')
+                scan_result['product'] = product_name
                 # Product info is already included in the response
                 product_info = product['product']
             else:
@@ -205,9 +238,7 @@ def handle_barcode(barcode: str, device: str = None):
                 scan_result['status'] = 'error'
                 scan_result['message'] = f"❌ Invalid product data from Grocy"
                 # Store and return
-                recent_scans.insert(0, scan_result)
-                if len(recent_scans) > 50:
-                    recent_scans.pop()
+                finish_scan(scan_result)
                 return
 
             # If product info wasn't in the barcode response, fetch it separately
@@ -216,6 +247,7 @@ def handle_barcode(barcode: str, device: str = None):
 
             if product_info:
                 product_name = product_info.get('name', 'Unknown')
+                scan_result['product'] = product_name
                 # Use current quantity, or default to 1 if no quantity barcode was scanned
                 amount = current_quantity if current_quantity > 0 else 1.0
 
@@ -252,6 +284,7 @@ def handle_barcode(barcode: str, device: str = None):
                     # Found via alias! Use the Grocy product ID
                     product_id = alias['grocy_product_id']
                     product_name = alias['grocy_product_name']
+                    scan_result['product'] = product_name
                     alias_found = True
 
                     logger.info(f"🔗 Found product via alias: {product_name} (ID {product_id})")
@@ -319,6 +352,7 @@ def handle_barcode(barcode: str, device: str = None):
                     # raw products and cleaned up later by tools/grocy_normalize.py +
                     # tools/grocy_review.py in the kitchen-stack repo.
                     product_name = external_product['name']
+                    scan_result['product'] = product_name
                     amount = current_quantity if current_quantity > 0 else 1.0
 
                     # Grocy enforces UNIQUE on products.name, so a title we have already
@@ -413,6 +447,7 @@ def handle_barcode(barcode: str, device: str = None):
                     # collide on Grocy's UNIQUE products.name the way a real title
                     # can, and it carries the barcode for whoever reviews it later.
                     product_name = f"Unknown {barcode}"
+                    scan_result['product'] = product_name
                     amount = current_quantity if current_quantity > 0 else 1.0
 
                     product_id = grocy_client.find_product_by_name(product_name)
@@ -457,9 +492,7 @@ def handle_barcode(barcode: str, device: str = None):
         scan_result['message'] = f"📦 Scanned (no Grocy configured)"
 
     # Store in recent scans (keep last 50)
-    recent_scans.insert(0, scan_result)
-    if len(recent_scans) > 50:
-        recent_scans.pop()
+    finish_scan(scan_result)
 
 # Initialize scanner (auto-detects all available devices)
 scanner = ScannerHandler(None, handle_barcode)
