@@ -167,21 +167,57 @@ class GrocyClient:
             return result if isinstance(result, list) else []
         return None
 
+    def _get_preset(self, setting: str) -> Optional[int]:
+        """
+        Read one of Grocy's "presets for new products" user settings.
+
+        Grocy returns these as strings, and uses -1 to mean "not set".
+        Returns the id as an int, or None when unset/unavailable.
+        """
+        settings = self._request('GET', 'user/settings')
+        if not settings or not isinstance(settings, dict):
+            return None
+        try:
+            value = int(settings.get(setting, -1))
+        except (TypeError, ValueError):
+            return None
+        return value if value > 0 else None
+
     def get_default_location_id(self) -> int:
-        """Get the first available location ID from Grocy."""
+        """
+        Location for newly created products.
+
+        Prefers Grocy's own "presets for new products" setting. Falling back to
+        whichever location sorts first is almost always wrong -- on a typical
+        setup that is a fridge, so shelf-stable goods land in cold storage.
+        """
+        preset = self._get_preset('product_presets_location_id')
+        if preset is not None:
+            logger.debug(f"Using preset location ID: {preset}")
+            return preset
+
         result = self._request('GET', 'objects/locations')
         if result and len(result) > 0:
             location_id = result[0].get('id', 1)
-            logger.debug(f"Using location ID: {location_id}")
+            logger.debug(f"No location preset set; falling back to {location_id}")
             return location_id
         return 1  # Fallback to 1
 
     def get_default_quantity_unit_id(self) -> int:
-        """Get the first available quantity unit ID from Grocy."""
+        """
+        Quantity unit for newly created products.
+
+        Prefers Grocy's "presets for new products" setting, as above.
+        """
+        preset = self._get_preset('product_presets_qu_id')
+        if preset is not None:
+            logger.debug(f"Using preset quantity unit ID: {preset}")
+            return preset
+
         result = self._request('GET', 'objects/quantity_units')
         if result and len(result) > 0:
             qu_id = result[0].get('id', 1)
-            logger.debug(f"Using quantity unit ID: {qu_id}")
+            logger.debug(f"No quantity unit preset set; falling back to {qu_id}")
             return qu_id
         return 1  # Fallback to 1
 
