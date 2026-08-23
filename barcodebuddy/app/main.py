@@ -465,6 +465,48 @@ def handle_barcode(barcode: str, device: str = None):
 scanner = ScannerHandler(None, handle_barcode)
 scanner.start()
 
+
+def log_scanner_bindings():
+    """
+    Report, at startup, what each detected scanner resolves to and which mode
+    it is bound to.
+
+    Without this the per-device binding fails silently: if sysfs is not
+    readable inside the container, device_usb_id() returns None, every scan
+    quietly falls back to the global mode, and nothing anywhere says so. That
+    is the same class of silent-wrong-mode bug this feature exists to remove,
+    so it should not be possible to hit it without seeing it.
+    """
+    bound = {config.scanner_add_device: 'ADD', config.scanner_consume_device: 'CONSUME'}
+    bound.pop('', None)
+
+    if not scanner.active_devices:
+        logger.warning("🔫 No scanner devices detected")
+        return
+
+    unresolved = 0
+    for dev in scanner.active_devices:
+        usb = device_usb_id(dev)
+        if usb is None:
+            unresolved += 1
+            logger.warning(f"🔫 {dev}: USB id unreadable - falls back to global mode")
+        else:
+            mode = bound.get(usb)
+            if mode:
+                logger.info(f"🔫 {dev}  {usb}  -> {mode}")
+            else:
+                logger.info(f"🔫 {dev}  {usb}  -> unbound (global mode)")
+
+    if bound and unresolved == len(scanner.active_devices):
+        logger.error(
+            "🔫 Per-device modes are configured but NO device could be resolved - "
+            "sysfs is likely unreadable in this container. Every scan will use the "
+            "global mode."
+        )
+
+
+log_scanner_bindings()
+
 @app.route('/')
 def index():
     """Main page."""
