@@ -73,6 +73,30 @@ else:
     logger.info("ℹ️  Alias integration not configured")
 
 # Initialize product database clients
+# GTIN lengths that actually exist: EAN-8, UPC-A, EAN-13, ITF-14. Anything else
+# is a retailer's internal code, not a global identifier.
+GTIN_LENGTHS = (8, 12, 13, 14)
+
+
+def is_gtin(barcode: str) -> bool:
+    """
+    Is this a real global trade number, or a shop's own item number?
+
+    Worth checking before any external lookup, because the databases do not
+    check. Penzeys bags carry a 5-digit item number; Open Food Facts
+    zero-pads 55540 to 00055540, finds a valid EAN-8, and confidently returns
+    a Dutch baby food product -- which then gets attached to that barcode
+    forever. A wrong answer is worse than no answer: "Unknown 55540" is
+    obviously unfinished and gets fixed, while "Bonbebe Fruithapje" looks
+    like it worked.
+
+    So non-GTIN codes skip external lookup entirely and are left for a
+    source that actually knows them -- see tools/penzeys_backfill.py.
+    """
+    code = (barcode or "").strip()
+    return code.isdigit() and len(code) in GTIN_LENGTHS
+
+
 openfoodfacts_client = OpenFoodFactsClient()
 upcdatabase_client = UPCDatabaseClient()
 
@@ -328,17 +352,23 @@ def handle_barcode(barcode: str, device: str = None):
                 external_product = None
                 database_name = None
 
-                if grocy_client and not external_product:
+                lookupable = is_gtin(barcode)
+                if not lookupable:
+                    logger.info(f"⏭  {barcode} is not a GTIN ({len(barcode)} digits) - "
+                                "skipping external lookup; a database would pad it and "
+                                "return someone else's product")
+
+                if grocy_client and lookupable and not external_product:
                     external_product = grocy_client.external_lookup(barcode)
                     if external_product:
                         database_name = "Grocy lookup plugin"
 
-                if config.enable_openfoodfacts and not external_product:
+                if config.enable_openfoodfacts and lookupable and not external_product:
                     external_product = openfoodfacts_client.lookup_barcode(barcode)
                     if external_product:
                         database_name = "OpenFoodFacts"
 
-                if config.enable_upcdatabase and not external_product:
+                if config.enable_upcdatabase and lookupable and not external_product:
                     external_product = upcdatabase_client.lookup_barcode(barcode)
                     if external_product:
                         database_name = "UPC Database"

@@ -1,5 +1,5 @@
 name: "Barcode Buddy (Python) (fire-and-forget fork)"
-version: "2.18.2-beta.2"
+version: "2.18.2-beta.3"
 # slug is deliberately unchanged from upstream: Home Assistant identifies an
 # installed add-on by slug, so renaming it would orphan an existing install
 # and its configuration.
@@ -59,7 +59,7 @@ options:
   barcode_quantity_prefix: "BBUDDY-Q-"
 
   # Product Databases (for unknown barcodes)
-  enable_openfoodfacts: true
+  enable_openfoodfacts: false
   enable_upcdatabase: true
 
   # Language
