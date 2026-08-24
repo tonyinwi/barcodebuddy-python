@@ -7,9 +7,25 @@ logger = logging.getLogger(__name__)
 
 
 class UPCDatabaseClient:
-    """Client for UPC Database API (free tier, no API key needed)."""
+    """
+    Client for upcdatabase.org.
+
+    An API key is REQUIRED, despite what older docs say. Without one the
+    endpoint answers HTTP 200 with {"success": false, "error": {"message":
+    "Your API Key is invalid..."}} -- so nothing raises, the lookup quietly
+    returns nothing, and the log line says "not found". That is how this
+    fallback sat dead and unnoticed while UPCitemdb was being rate-limited
+    with nothing behind it.
+
+    Free tier is 100 lookups/day, resetting nightly -- the same order as
+    UPCitemdb's trial, so running both roughly doubles the daily budget.
+    Paid tiers start at $2.50/month for 1,000/day.
+    """
 
     BASE_URL = "https://api.upcdatabase.org/product"
+
+    def __init__(self, api_key: str = ""):
+        self.api_key = (api_key or "").strip()
 
     def lookup_barcode(self, barcode: str) -> Optional[Dict[Any, Any]]:
         """
@@ -19,10 +35,15 @@ class UPCDatabaseClient:
         Note: Free tier has rate limits (~100 requests/day)
         """
         try:
+            if not self.api_key:
+                logger.info("⏭  UPC Database has no API key configured - skipping "
+                            "(set upcdatabase_api_key; the free tier is 100/day)")
+                return None
+
             url = f"{self.BASE_URL}/{barcode}"
             logger.info(f"Looking up barcode in UPC Database: {barcode}")
 
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, params={"apikey": self.api_key}, timeout=10)
 
             # UPC Database returns 404 if not found
             if response.status_code == 404:
@@ -47,7 +68,13 @@ class UPCDatabaseClient:
                 logger.info(f"✅ Found in UPC Database: {product_info['name']}")
                 return product_info
             else:
-                logger.info(f"❌ Not found in UPC Database: {barcode}")
+                # Distinguish a real miss from a broken key. Reporting an auth
+                # failure as "not found" is what hid this for weeks.
+                message = str((data.get("error") or {}).get("message", ""))
+                if "api key" in message.lower():
+                    logger.error(f"🔑 UPC Database rejected the API key: {message}")
+                else:
+                    logger.info(f"❌ Not found in UPC Database: {barcode}")
                 return None
 
         except requests.exceptions.RequestException as e:

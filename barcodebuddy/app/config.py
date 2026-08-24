@@ -73,6 +73,15 @@ class Config:
         return str(self._config.get('ha_webhook_url', '') or '').strip()
 
     @property
+    def upcdatabase_api_key(self) -> str:
+        """
+        upcdatabase.org API key. Empty means the lookup is skipped entirely
+        rather than firing a request that comes back 200-but-failed.
+        Free tier is 100/day; get one at https://upcdatabase.org/api
+        """
+        return str(self._config.get('upcdatabase_api_key', '') or '').strip()
+
+    @property
     def scanner_add_device(self) -> str:
         """
         USB "vendor:product" of the gun that always means ADD, e.g. "0581:011a".

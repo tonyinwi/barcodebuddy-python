@@ -98,7 +98,7 @@ def is_gtin(barcode: str) -> bool:
 
 
 openfoodfacts_client = OpenFoodFactsClient()
-upcdatabase_client = UPCDatabaseClient()
+upcdatabase_client = UPCDatabaseClient(config.upcdatabase_api_key)
 
 # Store recent scans
 recent_scans = []

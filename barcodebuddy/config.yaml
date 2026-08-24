@@ -1,5 +1,5 @@
 name: "Barcode Buddy (Python) (fire-and-forget fork)"
-version: "2.18.2-beta.3"
+version: "2.18.2-beta.4"
 # slug is deliberately unchanged from upstream: Home Assistant identifies an
 # installed add-on by slug, so renaming it would orphan an existing install
 # and its configuration.
@@ -62,6 +62,10 @@ options:
   enable_openfoodfacts: false
   enable_upcdatabase: true
 
+  # upcdatabase.org needs a key -- without one the lookup is skipped.
+  # Free tier is 100/day. https://upcdatabase.org/api
+  upcdatabase_api_key: ""
+
   # Language
   language: "en"
 
@@ -95,6 +99,7 @@ schema:
   # Product Databases
   enable_openfoodfacts: bool
   enable_upcdatabase: bool
+  upcdatabase_api_key: str?
 
   # Language (en/de/fr/es)
   language: str
