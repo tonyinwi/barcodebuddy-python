@@ -247,7 +247,8 @@ class GrocyClient:
     def create_product(self, name: str, description: str = "",
                        min_stock_amount: float = 0,
                        location_id=None, qu_id_purchase=None,
-                       qu_id_stock=None) -> Optional[int]:
+                       qu_id_stock=None,
+                       default_best_before_days: int = -1) -> Optional[int]:
         """
         Create a new product in Grocy.
 
@@ -255,6 +256,14 @@ class GrocyClient:
         minimum of 1 is counted by Grocy's GetMissingProducts and can be
         auto-added to the shopping list, which is how "gone and needed" is
         expressed -- Grocy cannot hold negative stock.
+
+        default_best_before_days is -1, Grocy's sentinel for "never expires"
+        (it stores 2999-12-31). Grocy reads this field as days-from-today, so
+        its own default of 0 does not mean "untracked" -- it means DUE TODAY.
+        Leaving it at 0 made every scanned item land already expiring, which
+        lit the expiring-products sensor permanently and said nothing useful.
+        Whether a pantry staple needs replacing is answered by
+        min_stock_amount, not by a date.
 
         location_id / qu_id_* override the fallbacks below. Pass the values from
         external_lookup(): Grocy resolves those against the user's "presets for
@@ -279,7 +288,8 @@ class GrocyClient:
             'location_id': location_id,
             'qu_id_purchase': qu_id_purchase,
             'qu_id_stock': qu_id_stock,
-            'min_stock_amount': min_stock_amount
+            'min_stock_amount': min_stock_amount,
+            'default_best_before_days': default_best_before_days
         }
         result = self._request('POST', 'objects/products', json=data)
         if result and 'created_object_id' in result:
