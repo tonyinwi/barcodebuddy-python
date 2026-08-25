@@ -1,5 +1,27 @@
 # Changelog
 
+## Renamed to "Kitchen Scanner"; version now bumps per deploy; build.yaml removed
+
+The add-on card and sidebar now read **Kitchen Scanner** / **Scanner**. The
+`slug` is deliberately unchanged -- Home Assistant identifies an installed
+add-on by slug, so renaming that would orphan the install and its config.
+
+`version:` must now be bumped on **every** deploy. This add-on builds from a
+git branch, so without a bump the version string is byte-identical before and
+after a push, and a stale clone looks exactly like a fresh one. Proving a
+deploy had landed previously meant correlating the git push time against
+`store.git` and Docker build lines in the supervisor log. Now `ha addons info`
+answers it, and HA shows "update available" when the branch moves.
+
+`build.yaml` is **deleted**. It declared `build_from: python:3.11-alpine` for
+every arch and was dead configuration: the Dockerfile hardcodes
+`FROM python:3.11-alpine` and never reads `ARG BUILD_FROM`, so the Supervisor's
+`--build-arg BUILD_FROM=...` was consumed by nothing. The value also failed the
+Supervisor's image-reference regex -- a bare `name:tag` has no registry/org
+path -- so every rebuild logged two warnings about a file that changed nothing.
+The base image lives in the Dockerfile.
+
+
 ## upcdatabase.org: "success" is not a hit, and the echo check must normalise GTINs
 
 Two bugs found live on 2026-08-25, the moment a real API key made this provider
