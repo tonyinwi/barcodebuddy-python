@@ -6,6 +6,28 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _tidy(value: str) -> str:
+    """
+    Collapse whitespace. Providers return things like
+    "Spectrum,  The Hain Celestial Group  Inc." with doubled spaces, and a
+    field that is going to be read by a human on a shopping list should not
+    carry the provider's formatting accidents.
+    """
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _barcode_userfields(brand: str, source: str, detail: str) -> dict:
+    """Only send fields that have a value -- a blank overwrite is still a write."""
+    fields = {}
+    if _tidy(brand):
+        fields['brand'] = _tidy(brand)
+    if _tidy(source):
+        fields['source'] = _tidy(source)
+    if _tidy(detail):
+        fields['detail'] = _tidy(detail)
+    return fields
+
+
 class GrocyClient:
     """Client for Grocy API."""
 
@@ -394,7 +416,8 @@ class GrocyClient:
         return False
 
     def add_barcode_to_product(self, product_id: int, barcode: str,
-                               brand: str = '', source: str = '') -> bool:
+                               brand: str = '', source: str = '',
+                               detail: str = '') -> bool:
         """
         Add a barcode to an existing product.
 
@@ -402,6 +425,12 @@ class GrocyClient:
         product. Brand is a barcode attribute in this data model: the generic
         product stays the source of truth so any variant satisfies a recipe,
         while each scanned barcode records which brand it actually was.
+
+        `detail` is the full name the lookup returned, before normalisation.
+        Once several barcodes share one generic product -- two brands of coconut
+        oil, say -- the product name no longer says which is which, and the
+        original retail name is the only record of what was actually on the
+        shelf. Without it, "I clearly bought two for some reason" has no answer.
 
         Returns True if the barcode was added. Userfield failures are logged but
         do not fail the call -- the barcode mapping is what matters.
@@ -419,7 +448,7 @@ class GrocyClient:
         barcode_id = result.get('created_object_id')
         if barcode_id and (brand or source):
             self.set_userfields('product_barcodes', barcode_id,
-                                {'brand': brand, 'source': source})
+                                _barcode_userfields(brand, source, detail))
         return True
 
     def update_product_name(self, product_id: int, new_name: str) -> bool:

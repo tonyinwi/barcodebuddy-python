@@ -513,7 +513,11 @@ def handle_barcode(barcode: str, device: str = None):
                         if not grocy_client.add_barcode_to_product(
                                 product_id, barcode,
                                 brand=external_product.get('brand', ''),
-                                source=database_name or ''):
+                                source=database_name or '',
+                                # The full retail name, kept on the BARCODE. Once
+                                # several barcodes share one generic product the
+                                # product name no longer says which is which.
+                                detail=external_product.get('name', '')):
                             logger.warning(f"Product {product_id} ready but failed to attach barcode {barcode}")
 
                         if mode == 'add':
