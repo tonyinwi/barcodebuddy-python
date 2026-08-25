@@ -63,12 +63,36 @@ class LocationTracker:
         self._lock = threading.Lock()
         self._by_device = {}        # device -> {"id","name","at"}
 
-    @staticmethod
-    def _key(device):
-        # An unidentified gun still gets state, under one shared key. Better
-        # than dropping the feature entirely on a setup with one unbound
-        # scanner, and honest about what it is.
-        return device or "(unknown device)"
+    # Resolves a device node to its USB id. Injected so this module stays
+    # testable without the scanner package.
+    usb_resolver = None
+
+    def _key(self, device):
+        """
+        Key on the USB id, NOT the device node.
+
+        One physical gun presents as several /dev/hidrawN nodes -- this setup
+        shows 0581:011a on both hidraw0 and hidraw1. Keying on the node means
+        setting a location while the gun emits on hidraw0, then losing it the
+        moment it emits on hidraw1: the location silently stops applying and
+        everything lands on the preset shelf.
+
+        `resolve_scan_mode()` already keys on the USB id for exactly this
+        reason. This did not, which was a latent bug -- today's scans all
+        happened to come through one node.
+
+        An unresolvable device still gets state under a shared key: better than
+        dropping the feature on a setup where sysfs is unreadable.
+        """
+        if not device:
+            return "(unknown device)"
+        usb = None
+        if self.usb_resolver:
+            try:
+                usb = self.usb_resolver(device)
+            except Exception:                                    # noqa: BLE001
+                usb = None
+        return f"usb:{usb}" if usb else f"dev:{device}"
 
     def set(self, device, location_id, location_name):
         with self._lock:

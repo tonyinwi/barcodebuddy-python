@@ -177,6 +177,9 @@ current_mode = 'add'
 # Which shelf each gun is standing at. Per gun, and it forgets after 10
 # idle minutes -- see locations.py for why both of those matter.
 location_tracker = loc.LocationTracker()
+# One gun can be several /dev/hidrawN nodes, so the tracker resolves them to a
+# USB id -- the same identity resolve_scan_mode() uses to bind ADD/CONSUME.
+location_tracker.usb_resolver = device_usb_id
 
 def notify_webhook(payload: dict):
     """
@@ -570,10 +573,19 @@ def handle_barcode(barcode: str, device: str = None):
                         logger.info(f"🔗 Placeholder '{product_name}' already exists (ID {product_id})")
                     else:
                         min_stock = 0 if mode == 'add' else 1
+                        # The scanned location matters MOST here. An unknown gets
+                        # its name fixed later from the review queue -- but nobody
+                        # re-walks the house to fix a shelf, so a placeholder
+                        # created in the wrong location stays wrong.
+                        here = location_tracker.current(device)
+                        if here:
+                            logger.info(f"📍 placeholder in {here['name']} "
+                                        f"(scanned location, not the preset)")
                         product_id = grocy_client.create_product(
                             product_name,
                             description="Auto-created via Barcode Buddy - not found in any database",
-                            min_stock_amount=min_stock
+                            min_stock_amount=min_stock,
+                            location_id=(here or {}).get("id")
                         )
 
                     if not product_id:

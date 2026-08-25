@@ -1,5 +1,24 @@
 # Changelog
 
+## Fix: unknown barcodes ignored the scanned location
+
+Found by Tony scanning half a cabinet. Resolved products landed in Oils &
+Vinegar correctly; every `Unknown <barcode>` placeholder landed in the preset.
+
+The not-found branch is a **second** `create_product()` call site and it passed
+no `location_id` at all. That is the worst one to get wrong: an unknown gets its
+*name* fixed later from the review queue, but nobody re-walks the house to fix a
+shelf, so a placeholder created in the wrong place stays wrong.
+
+Also fixed, latent and exposed by the same log: **the tracker keyed on the
+device node, not the USB id.** One physical gun presents as several
+`/dev/hidrawN` -- here `0581:011a` is both hidraw0 and hidraw1. Setting a
+location while the gun emitted on hidraw0 and then losing it when it emitted on
+hidraw1 would have made the location silently stop applying.
+`resolve_scan_mode()` already keys on the USB id for exactly this reason; this
+did not. Today's scans happened to all arrive on one node, so it never fired.
+
+
 ## Fix: QR codes on the printed sheets were clipped, not scaled
 
 Every QR on the control sheet was drawn by adding a `QrCodeWidget` to a
