@@ -238,6 +238,16 @@ class GrocyClient:
         logger.info(f"📍 Product presets resolved: location={loc} qu={qu}")
         return self._presets
 
+    def get_locations(self) -> list:
+        """
+        Grocy's locations. Cached: they change roughly never and this sits on
+        the scan path, where a location QR must resolve without a round trip
+        the person is waiting on.
+        """
+        if getattr(self, "_locations_cache", None) is None:
+            self._locations_cache = self._request('GET', 'objects/locations') or []
+        return self._locations_cache
+
     def get_default_location_id(self) -> int:
         """
         Location for newly created products.

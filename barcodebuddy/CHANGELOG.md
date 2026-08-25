@@ -1,5 +1,42 @@
 # Changelog
 
+## Location-flip barcodes: tell a gun which shelf it is at
+
+Scan `BBUDDY-LOC-BIG-PANTRY` at a shelf and everything that gun scans next is
+created there. Scan another when you move. Walk away for ten minutes and it
+forgets.
+
+**Per gun, not global.** The rule is "10 minutes of no scans on that same gun",
+which only means anything if each gun carries its own location -- and it
+matches how mode already works, since `resolve_scan_mode()` binds ADD/CONSUME
+per device. The stock gun parked in the basement cannot change what the garbage
+gun records in the kitchen.
+
+**It expires because a persistent location is dangerous.** A persistent *mode*
+is safe: two guns are each bound to one permanently. A location is not. Walk
+away, come back tomorrow, and every scan lands in the Spice Cabinet -- silently,
+and visible weeks later as a catalogue full of wrong shelves. On expiry it
+reverts to `product_presets_location_id` rather than clearing, because Grocy's
+`products.location_id` is NOT NULL and something must always be supplied.
+
+**Descriptive payloads, not ids.** `BBUDDY-LOC-OILS-VINEGAR`, not
+`BBUDDY-LOC-12`. QR removes any length penalty, a label taped to a shelf should
+be readable by whoever is standing in front of it, and ids change across a
+database rebuild while names do not. Slugging is deliberately lossy and stable;
+two locations that slug identically are an **error**, not a guess, because
+silently picking one is how the wrong shelf reaches hundreds of products.
+
+**An unrecognised location code clears the gun's location** rather than leaving
+the previous shelf in effect. A rejected scan that quietly kept the old value
+would send the next fifty products to the wrong place.
+
+**The PDF sheet is data-driven**, and that is the real change there. The control
+sheet hardcodes ADD/CONSUME/quantity, which is fine because those never change.
+Locations do: add a shelf in Grocy, regenerate, and it is on the page.
+`GET /api/download-location-sheet` builds it from `/objects/locations`.
+`GET /api/locations` reports where each gun is and how long it has left.
+
+
 ## The scanner is an input device again
 
 The provider chain, priorities, keys and attempt log all move to the Kitchen

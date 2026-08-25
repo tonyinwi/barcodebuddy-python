@@ -24,6 +24,69 @@ def _create_barcode(barcode_text, barcode_format='code128'):
         )
 
 
+def generate_location_sheet_pdf(locations, barcode_format='qr'):
+    """
+    One QR per Grocy location, on shelf-sized cards.
+
+    DATA-DRIVEN on purpose. The control sheet above hardcodes its barcode list,
+    which is fine for ADD/CONSUME/quantity because those never change. Locations
+    do: add a shelf in Grocy, regenerate, and it is on the page. A hardcoded
+    list would quietly stop matching the house, and the failure would show up as
+    products on the wrong shelf weeks later.
+
+    Defaults to QR. The payload is descriptive -- BBUDDY-LOC-BIG-PANTRY -- so
+    the person standing in front of a taped-up label can read what it is, and QR
+    removes any reason to prefer a short numeric code.
+    """
+    import locations as loc
+
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+
+    c.setFont("Helvetica-Bold", 20)
+    c.drawString(50, height - 50, "Kitchen — Location Codes")
+    c.setFont("Helvetica", 11)
+    c.drawString(50, height - 70,
+                 "Scan at a shelf. Everything that gun scans next is created there.")
+    c.drawString(50, height - 85,
+                 "Forgets after 10 minutes without a scan, and falls back to the preset.")
+
+    cols, card_w, card_h = 2, (width - 100) / 2, 150
+    x0, y = 50, height - 120
+    for idx, row in enumerate(locations or []):
+        name = str(row.get("name") or "")
+        payload = loc.barcode_for(name)
+        col = idx % cols
+        x = x0 + col * card_w
+        if col == 0 and idx:
+            y -= card_h
+        if y < 120:                       # new page before we run off the bottom
+            c.showPage()
+            y = height - 120
+            c.setFont("Helvetica-Bold", 20)
+            c.drawString(50, height - 50, "Kitchen — Location Codes (cont.)")
+
+        obj = _create_barcode(payload, barcode_format)
+        if barcode_format == 'qr':
+            d = Drawing(90, 90)
+            obj.barWidth = 90
+            obj.barHeight = 90
+            d.add(obj)
+            renderPDF.draw(d, c, x, y - 95)
+        else:
+            obj.drawOn(c, x, y - 60)
+
+        c.setFont("Helvetica-Bold", 13)
+        c.drawString(x + 100, y - 30, name)
+        c.setFont("Helvetica", 8)
+        c.drawString(x + 100, y - 46, payload)
+
+    c.save()
+    buffer.seek(0)
+    return buffer
+
+
 def generate_quantity_barcodes_pdf(barcode_format='code128'):
     """Generate a PDF with quantity barcodes (3-10, 20, 30)."""
     # Create PDF buffer

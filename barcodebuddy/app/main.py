@@ -9,8 +9,9 @@ import threading
 from config import Config
 from grocy import GrocyClient
 from scanner import ScannerHandler, device_usb_id
+import locations as loc
 from alias_client import AliasClient
-from pdf_generator import generate_quantity_barcodes_pdf
+from pdf_generator import generate_quantity_barcodes_pdf, generate_location_sheet_pdf
 from datetime import datetime
 
 # Setup logging
@@ -173,6 +174,9 @@ current_quantity = 0.0
 
 # Current mode: 'add' or 'consume'
 current_mode = 'add'
+# Which shelf each gun is standing at. Per gun, and it forgets after 10
+# idle minutes -- see locations.py for why both of those matter.
+location_tracker = loc.LocationTracker()
 
 def notify_webhook(payload: dict):
     """
@@ -279,6 +283,31 @@ def handle_barcode(barcode: str, device: str = None):
         finish_scan(scan_result)
         return
 
+    # Check if this is a location barcode
+    if barcode.startswith(loc.PREFIX):
+        try:
+            location, err = loc.resolve(barcode, grocy_client.get_locations()
+                                        if grocy_client else [])
+        except Exception as e:                                   # noqa: BLE001
+            location, err = None, f"could not read Grocy locations: {e}"
+        if location:
+            location_tracker.set(device, location["id"], location["name"])
+            scan_result['status'] = 'location'
+            scan_result['message'] = f"📍 Location: {location['name']}"
+            scan_result['location'] = location["name"]
+            logger.info(f"📍 {device or 'gun'} is now at: {location['name']} "
+                        f"(id {location['id']})")
+        else:
+            # Never fall back to a guess: an unmatched location code must not
+            # quietly leave the previous shelf in effect, because the next
+            # fifty scans would land there.
+            location_tracker.set(device, None, None)
+            scan_result['status'] = 'error'
+            scan_result['message'] = f"❌ {err or 'unknown location code'}"
+            logger.error(f"📍 location barcode rejected: {barcode} -- {err}")
+        finish_scan(scan_result)
+        return
+
     # Check if this is a quantity barcode
     if barcode.startswith(config.barcode_quantity_prefix):
         try:
@@ -296,6 +325,9 @@ def handle_barcode(barcode: str, device: str = None):
         # Store scan result and return
         finish_scan(scan_result)
         return
+
+    # A product scan is activity: the idle clock is per gun, not per session.
+    location_tracker.touch(device)
 
     # Regular product barcode handling
     if grocy_client:
@@ -447,11 +479,22 @@ def handle_barcode(barcode: str, device: str = None):
                         # Grocy's own lookup supplies location/unit resolved against
                         # the user's presets; the other sources supply nothing, and
                         # create_product() falls back for those.
+                        #
+                        # A location scanned on THIS gun wins over the preset: the
+                        # person is standing at the shelf and has just said so. When
+                        # no location is set, or the gun has been idle 10 minutes,
+                        # this is None and the preset applies exactly as before.
+                        here = location_tracker.current(device)
+                        location_id = ((here or {}).get("id")
+                                       or external_product.get('location_id'))
+                        if here:
+                            logger.info(f"📍 creating in {here['name']} "
+                                        f"(scanned location, not the preset)")
                         product_id = grocy_client.create_product(
                             product_name,
                             description=f"Auto-created via Barcode Buddy from {database_name}",
                             min_stock_amount=min_stock,
-                            location_id=external_product.get('location_id'),
+                            location_id=location_id,
                             qu_id_purchase=external_product.get('qu_id_purchase'),
                             qu_id_stock=external_product.get('qu_id_stock')
                         )
@@ -619,6 +662,40 @@ def index():
                          has_grocy=config.has_grocy,
                          scanner_devices=scanner.active_devices,
                          current_locale=get_locale())
+
+@app.route('/api/download-location-sheet')
+def download_location_sheet():
+    """A printable QR sheet, generated from Grocy's ACTUAL locations."""
+    try:
+        rows = grocy_client.get_locations() if grocy_client else []
+        if not rows:
+            return jsonify({"error": "no locations available from Grocy"}), 503
+        fmt = request.args.get('format', 'qr')
+        buf = generate_location_sheet_pdf(rows, barcode_format=fmt)
+        return send_file(buf, mimetype='application/pdf', as_attachment=True,
+                         download_name='kitchen-location-codes.pdf')
+    except Exception as err:                                     # noqa: BLE001
+        logger.error(f"location sheet failed: {err}")
+        return jsonify({"error": str(err)[:200]}), 500
+
+
+@app.route('/api/locations')
+def locations_state():
+    """
+    Where each gun currently is, with its remaining idle seconds, plus the
+    location codes themselves so a label can be checked against the house.
+    """
+    try:
+        rows = grocy_client.get_locations() if grocy_client else []
+    except Exception:                                            # noqa: BLE001
+        rows = []
+    return jsonify({
+        "idle_seconds": location_tracker.idle_seconds,
+        "guns": location_tracker.snapshot(),
+        "codes": [{"id": r.get("id"), "name": r.get("name"),
+                   "barcode": loc.barcode_for(r.get("name"))} for r in rows],
+    })
+
 
 @app.route('/api/scans')
 def get_scans():
