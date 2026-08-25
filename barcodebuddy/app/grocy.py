@@ -135,6 +135,11 @@ class GrocyClient:
             'brand': result.get('__brand', ''),
             'quantity': '',
             'image_url': result.get('__image_url', ''),
+            # Which provider actually answered, carried through from the
+            # Kitchen Stack engine via the plugin. Without this the barcode's
+            # source userfield says "Grocy lookup", which is the messenger,
+            # not the source.
+            '__source': result.get('__source', ''),
             # Grocy-native fields, already resolved against the user's presets.
             'location_id': result.get('location_id'),
             'qu_id_purchase': result.get('qu_id_purchase'),
