@@ -101,6 +101,28 @@ class Config:
         return str(self._config.get('scanner_consume_device', '') or '').strip().lower()
 
     @property
+    def enable_upcitemdb(self) -> bool:
+        """UPCitemdb, called directly rather than through Grocy's plugin."""
+        return self._config.get('enable_upcitemdb', True)
+
+    @property
+    def upcitemdb_api_key(self) -> str:
+        """Empty uses the free trial endpoint (~100/day, no signup)."""
+        return str(self._config.get('upcitemdb_api_key', '') or '').strip()
+
+    @property
+    def enable_grocy_lookup(self) -> bool:
+        """
+        The OLD path: UPCitemdb via Grocy's external-lookup plugin.
+
+        Off by default now that UPCitemdb is called directly. Kept as a rollback
+        switch rather than deleted, because the plugin is still what resolves
+        the product presets for anything else that calls Grocy's external-lookup
+        (Basil, Grocy's own UI).
+        """
+        return self._config.get('enable_grocy_lookup', False)
+
+    @property
     def usda_api_key(self) -> str:
         """
         USDA FoodData Central key. STORED, NOT YET USED.

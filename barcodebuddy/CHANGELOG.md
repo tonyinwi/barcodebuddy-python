@@ -1,5 +1,42 @@
 # Changelog
 
+## UPCitemdb is called directly; the chain finally lives in one runtime
+
+UPCitemdb used to be reached through Grocy's `external-lookup`, i.e. through a
+PHP plugin on another host. That is why provider order could never be
+configurable: half the chain was somewhere else, in another language, with its
+own key. `upcitemdb.py` calls it directly -- trial endpoint with no key, paid
+production endpoint with one.
+
+The old path survives as `enable_grocy_lookup`, **off by default**, purely as a
+rollback switch.
+
+**The plugin stays installed, and must.** Grocy's "presets for new products"
+are read by the barcode-lookup plugin and by *nothing else* on the API path --
+that is the only reason scans land in Big Pantry instead of whichever location
+sorts first. Anything else calling `external-lookup` (Basil, Grocy's own UI)
+still needs it.
+
+So this add-on now resolves those presets itself, the same way the plugin did:
+`product_presets_location_id` and `product_presets_qu_id`, each falling back to
+the first location / first quantity unit when unset (`-1`). Measured here: the
+location preset is 7, the quantity preset is unset, and the first-unit fallback
+gives 2 -- exactly what the plugin was returning. The presets are applied with
+`setdefault`, so a provider that supplies its own values keeps them, and they
+are cached because user settings change roughly never and this is on the scan
+path.
+
+`gtin.py` holds `is_gtin` and `same_gtin` in one place so two providers cannot
+drift apart on rules that were both expensive to establish.
+
+The new client carries the lessons the others taught: a hit must have a
+non-empty title, the returned `ean`/`upc` must be the same GTIN that was asked
+for, HTTP 429 is `throttled` rather than an error, and images prefer the first
+**https** URL with a real extension -- UPCitemdb's first entry is often a
+third-party reseller host that is dead or hotlink-blocked, which is a known
+reason product pictures silently never arrived.
+
+
 ## Validate the providers at startup, and say so in the log
 
 Every start now prints what is actually wired up and whether it is actually

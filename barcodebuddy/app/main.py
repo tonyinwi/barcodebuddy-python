@@ -11,6 +11,7 @@ from grocy import GrocyClient
 from scanner import ScannerHandler, device_usb_id
 from openfoodfacts import OpenFoodFactsClient
 from upcdatabase import UPCDatabaseClient
+from upcitemdb import UPCItemDbClient
 import lookup_log as lg
 from alias_client import AliasClient
 from pdf_generator import generate_quantity_barcodes_pdf
@@ -126,12 +127,20 @@ def validate_providers(days=7):
     rows = []
 
     rows.append({
-        "provider": "upcitemdb-via-grocy",
-        "enabled": bool(grocy_client),
+        "provider": "upcitemdb",
+        "enabled": bool(config.enable_upcitemdb),
         "needs_key": False,
         "key_set": True,
-        "note": "via Grocy external-lookup plugin" if grocy_client
-                else "Grocy not configured -- this provider is inert",
+        "note": ("paid production endpoint" if config.upcitemdb_api_key
+                 else "free trial endpoint, ~100/day, no signup"),
+        "recent": recent("upcitemdb"),
+    })
+    rows.append({
+        "provider": "upcitemdb-via-grocy",
+        "enabled": bool(config.enable_grocy_lookup and grocy_client),
+        "needs_key": False,
+        "key_set": True,
+        "note": "OLD path via the PHP plugin -- rollback switch, off by default",
         "recent": recent("upcitemdb-via-grocy"),
     })
     rows.append({
@@ -232,7 +241,22 @@ def lookup_chain(barcode):
                          "latency_ms": 0})
         return None, None, attempts
 
-    if grocy_client and not external_product:
+    if config.enable_upcitemdb and not external_product:
+        with lookup_logger.attempt(barcode, "upcitemdb") as att:
+            external_product = upcitemdb_client.lookup_barcode(barcode)
+            att.outcome = upcitemdb_client.last_outcome
+            if att.outcome == lg.ECHO_REJECT:
+                att.echo_ok = False
+            elif att.outcome == lg.HIT:
+                att.echo_ok = True
+        _note(att)
+        if external_product:
+            database_name = "UPCitemdb"
+
+    # The OLD path, kept as a rollback switch. Off by default: it reached the
+    # same provider through Grocy's PHP plugin, which is why provider order
+    # could never be configurable -- half the chain lived in another runtime.
+    if config.enable_grocy_lookup and grocy_client and not external_product:
         with lookup_logger.attempt(barcode, "upcitemdb-via-grocy") as att:
             external_product = grocy_client.external_lookup(barcode)
             att.outcome = lg.HIT if external_product else lg.MISS
@@ -262,11 +286,24 @@ def lookup_chain(barcode):
         if external_product:
             database_name = "UPC Database"
 
+    # Grocy's "presets for new products" are read by the lookup PLUGIN and by
+    # nothing else on the API path. Calling providers directly means applying
+    # them here, or every scan lands on whichever location sorts first instead
+    # of Big Pantry. Only fills what a provider did not supply, so the plugin
+    # path keeps its own values when it is the one that answered.
+    if external_product and grocy_client:
+        try:
+            for key, value in grocy_client.get_product_presets().items():
+                external_product.setdefault(key, value)
+        except Exception as err:                                 # noqa: BLE001
+            logger.warning(f"could not resolve product presets: {err}")
+
     return external_product, database_name, attempts
 
 
 openfoodfacts_client = OpenFoodFactsClient()
 upcdatabase_client = UPCDatabaseClient(config.upcdatabase_api_key)
+upcitemdb_client = UPCItemDbClient(config.upcitemdb_api_key)
 # One record per provider ATTEMPT. See lookup_log.py for why this ships before
 # the first bulk inventory rather than after it.
 lookup_logger = lg.LookupLog(config.lookup_log_path)

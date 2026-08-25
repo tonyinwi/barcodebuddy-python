@@ -186,6 +186,53 @@ class GrocyClient:
             return None
         return value if value > 0 else None
 
+    def get_product_presets(self) -> dict:
+        """
+        Grocy's "presets for new products", resolved the way the lookup plugin
+        resolved them.
+
+        This matters more than it looks. Nothing on Grocy's API path consults
+        these presets -- they are read by the barcode-lookup plugin and nowhere
+        else, which is the only reason scans land in Big Pantry rather than
+        whichever location sorts first. Calling UPCitemdb directly means this
+        add-on must do that resolution itself or every scan lands on the wrong
+        shelf.
+
+        A preset of -1 means "unset", and falls back to the first location /
+        first quantity unit exactly as the plugin did. Cached: user settings
+        change roughly never, and this is on the scan path.
+        """
+        if getattr(self, "_presets", None) is not None:
+            return self._presets
+
+        def setting(key):
+            try:
+                r = self._request('GET', f'user/settings/{key}')
+                return (r or {}).get('value')
+            except Exception:                                    # noqa: BLE001
+                return None
+
+        loc = setting('product_presets_location_id')
+        qu = setting('product_presets_qu_id')
+        try:
+            loc = int(loc)
+        except (TypeError, ValueError):
+            loc = -1
+        try:
+            qu = int(qu)
+        except (TypeError, ValueError):
+            qu = -1
+
+        if loc == -1:
+            loc = self.get_default_location_id()
+        if qu == -1:
+            qu = self.get_default_quantity_unit_id()
+
+        self._presets = {"location_id": loc, "qu_id_purchase": qu,
+                         "qu_id_stock": qu}
+        logger.info(f"📍 Product presets resolved: location={loc} qu={qu}")
+        return self._presets
+
     def get_default_location_id(self) -> int:
         """
         Location for newly created products.

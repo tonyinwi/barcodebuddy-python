@@ -2,7 +2,7 @@ name: "Kitchen Scanner"
 # Bump this on EVERY deploy. It is the only cheap way to tell which build is
 # running: the add-on is built from a git branch, so without a bump the version
 # string is identical before and after a push and a stale clone is invisible.
-version: "2.18.2-beta.9"
+version: "2.18.2-beta.10"
 # slug is deliberately unchanged from upstream: Home Assistant identifies an
 # installed add-on by slug, so renaming it would orphan an existing install
 # and its configuration.
@@ -75,6 +75,18 @@ options:
   lookup_log_path: "/share/kitchen-stack/lookup_log.jsonl"
 
   # Product Databases (for unknown barcodes)
+  #
+  # UPCitemdb is now called DIRECTLY. It used to be reached through Grocy's
+  # external-lookup plugin, which meant half the chain lived in another runtime
+  # and provider order could never be configurable.
+  enable_upcitemdb: true
+  upcitemdb_api_key: ""
+
+  # The old plugin path, kept as a rollback switch. The plugin itself stays
+  # installed: it is still what resolves product presets for anything else that
+  # calls Grocy's external-lookup.
+  enable_grocy_lookup: false
+
   enable_openfoodfacts: false
   enable_upcdatabase: true
 
@@ -123,6 +135,9 @@ schema:
   lookup_log_path: str?
 
   # Product Databases
+  enable_upcitemdb: bool
+  upcitemdb_api_key: str?
+  enable_grocy_lookup: bool
   enable_openfoodfacts: bool
   enable_upcdatabase: bool
   upcdatabase_api_key: str?
