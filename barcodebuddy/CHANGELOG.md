@@ -1,5 +1,25 @@
 # Changelog
 
+## The scanner is an input device again
+
+The provider chain, priorities, keys and attempt log all move to the Kitchen
+Stack add-on. `lookup_chain()` here is now a single call to Grocy's
+external-lookup: Grocy is the resolution authority, its plugin proxies to the
+engine, and this add-on scans, asks, creates and stocks.
+
+For one day the chain lived here instead. That inverted the architecture -- the
+input device was the authority and the inventory system was its client -- and
+Tony called it: the scanner was never meant to own the lookup.
+
+Deleted: upcitemdb.py, upcdatabase.py, openfoodfacts.py, lookup_log.py,
+gtin.py, the priority options, and every provider key. `/api/lookup-stats` and
+`/api/providers` survive as thin delegations to the engine so existing callers
+keep working during the cutover. `is_gtin` stays on the scan path -- garbage
+never deserves an HTTP round trip.
+
+Net: this fork is ~600 lines closer to upstream than it was yesterday.
+
+
 ## One number per provider, replacing the list and the enable_ flags
 
 `lookup_order` plus `enable_*` booleans were two ways to say the same thing, and

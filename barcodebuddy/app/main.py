@@ -9,10 +9,6 @@ import threading
 from config import Config
 from grocy import GrocyClient
 from scanner import ScannerHandler, device_usb_id
-from openfoodfacts import OpenFoodFactsClient
-from upcdatabase import UPCDatabaseClient
-from upcitemdb import UPCItemDbClient
-import lookup_log as lg
 from alias_client import AliasClient
 from pdf_generator import generate_quantity_barcodes_pdf
 from datetime import datetime
@@ -99,249 +95,71 @@ def is_gtin(barcode: str) -> bool:
     return code.isdigit() and len(code) in GTIN_LENGTHS
 
 
+KITCHEN_STACK_URL = "http://172.16.0.138:8099"
+
+
 def validate_providers(days=7):
     """
-    What is actually wired up, and is it actually working?
-
-    Deliberately spends NO lookup quota. Two cheap sources instead:
-
-      * static configuration -- enabled, and does it have the key it needs?
-      * the attempt log -- what did this provider really do lately?
-
-    The second matters more than a synthetic probe would. upcdatabase.org sat
-    dead for weeks returning HTTP 200 success:false; a startup ping would have
-    said "reachable" and told you nothing. "0 hits in 200 attempts" is the line
-    that shouts.
-
-    The static half catches the other failure seen here: a provider ENABLED with
-    an EMPTY key, which is skipped silently on every single scan.
+    Delegated: the engine and its evidence live in the Kitchen Stack add-on.
+    This survives only so /api/providers keeps answering during the cutover.
     """
-    stats = lookup_logger.stats(days=days).get("providers", {})
-
-    def recent(name):
-        p = stats.get(name)
-        if not p or not p.get("asked"):
-            return None
-        return p
-
-    rows = []
-
-    meta = {
-        "upcitemdb": (False, True,
-                      "paid production endpoint" if config.upcitemdb_api_key
-                      else "free trial endpoint, ~100/day, BURST-THROTTLES"),
-        "upcdatabase": (True, bool(config.upcdatabase_api_key), "free tier is 100/day"),
-        "openfoodfacts": (False, True, "no key required"),
-        "upcitemdb-via-grocy": (False, True,
-                                "OLD path via the PHP plugin -- rollback switch"),
-    }
-    order = config.lookup_order
-    ties = config.priority_ties()
-
-    # In configured order first, so the log reads like the chain runs.
-    for pos, name in enumerate(order, 1):
-        spec = PROVIDERS.get(name)
-        needs_key, key_set, note = meta.get(name, (False, True, ""))
-        rows.append({
-            "provider": name,
-            "position": pos,
-            "priority": config.priority(name),
-            "in_chain": True,
-            "enabled": bool(spec and spec["enabled"]()),
-            "needs_key": needs_key,
-            "key_set": key_set,
-            "note": note if spec else "UNKNOWN PROVIDER NAME -- never called",
-            "recent": recent(name),
-        })
-    # Then anything switched on but left out of the order -- configured and
-    # inert, which looks identical to a provider that never matches.
-    for name, spec in PROVIDERS.items():
-        if name in order:
-            continue
-        needs_key, key_set, note = meta.get(name, (False, True, ""))
-        rows.append({
-            "provider": name,
-            "position": None,
-            "priority": config.priority(name),
-            "in_chain": False,
-            "enabled": bool(spec["enabled"]()),
-            "needs_key": needs_key,
-            "key_set": key_set,
-            "note": note,
-            "recent": recent(name),
-        })
-    rows.append({
-        "provider": "usda",
-        "enabled": False,      # deliberately not in the chain -- see BACKLOG.md
-        "needs_key": True,
-        "key_set": bool(config.usda_api_key),
-        "note": "key stored, provider intentionally NOT in the chain",
-        "recent": recent("usda"),
-    })
-
-    for r in rows:
-        warns = []
-        # A tie is possible now in a way an ordered list made impossible, so say
-        # so rather than resolving it silently by declaration order.
-        for pr, first, second in ties:
-            if r["provider"] in (first, second):
-                warns.append(f"priority {pr} is shared with "
-                             f"{second if r['provider'] == first else first} -- "
-                             "order falls back to a fixed tiebreak")
-        if r["enabled"] and r["needs_key"] and not r["key_set"]:
-            warns.append("ENABLED BUT NO KEY -- every lookup is skipped silently")
-        rec = r["recent"]
-        if rec:
-            if rec["hits"] == 0 and rec["asked"] >= 10:
-                warns.append(f"0 hits in {rec['asked']} attempts over {days}d -- broken?")
-            if rec["outcomes"].get("auth_error"):
-                warns.append("key was REJECTED recently")
-            if rec["outcomes"].get("throttled"):
-                warns.append(f"throttled {rec['outcomes']['throttled']}x")
-            if rec.get("echo_failures"):
-                warns.append(f"{rec['echo_failures']} echo mismatch(es) -- wrong product returned")
-        elif r["enabled"]:
-            warns.append(f"no attempts logged in {days}d")
-        r["warnings"] = warns
-    return rows
+    resp = requests.get(f"{KITCHEN_STACK_URL}/api/providers",
+                        params={"days": days}, timeout=15)
+    resp.raise_for_status()
+    return resp.json().get("providers", [])
 
 
 def log_provider_check():
-    """Print the provider check at startup, so a dead provider is obvious."""
+    """The engine's provider check, echoed at startup for the log's sake."""
     try:
         rows = validate_providers()
     except Exception as err:                                     # noqa: BLE001
-        logger.warning(f"provider check failed: {err}")
+        logger.warning(f"provider check unavailable (engine down?): {err}")
         return
-    logger.info("🔎 Provider check (no lookups spent):")
+    logger.info("🔎 Provider check (from the Kitchen Stack engine):")
     for r in rows:
-        state = "ENABLED " if r["enabled"] else "disabled"
-        pos = f"{r['priority']}." if r.get("position") else " -"
-        rec = r["recent"]
-        ev = (f"last 7d: {rec['asked']} asked, {rec['hits']} hit "
-              f"({rec['hit_rate_pct']}%), median {rec['median_ms']}ms") if rec else "no recent attempts"
-        logger.info(f"   {pos:>3} {state} {r['provider']:22s} {ev}   [{r['note']}]")
-        for w in r["warnings"]:
-            logger.warning(f"      ⚠  {r['provider']}: {w}")
+        state = "ENABLED " if r.get("enabled") else "disabled"
+        pr = r.get("priority") or "-"
+        logger.info(f"   {pr}. {state} {r.get('provider', '?')}")
+        for w in r.get("warnings", []):
+            logger.warning(f"      ⚠  {w}")
 
 
-# The chain is data, not a stack of if-statements, so the order can come from
-# configuration. Adding a provider is a dict entry; reordering is a UI edit.
-PROVIDERS = {
-    "upcitemdb": {
-        "label": "UPCitemdb",
-        "enabled": lambda: config.priority("upcitemdb") > 0,
-        "lookup": lambda bc: upcitemdb_client.lookup_barcode(bc),
-        "outcome": lambda: upcitemdb_client.last_outcome,
-    },
-    "upcdatabase": {
-        "label": "UPC Database",
-        "enabled": lambda: config.priority("upcdatabase") > 0,
-        "lookup": lambda bc: upcdatabase_client.lookup_barcode(bc),
-        "outcome": lambda: upcdatabase_client.last_outcome,
-    },
-    "openfoodfacts": {
-        "label": "OpenFoodFacts",
-        "enabled": lambda: config.priority("openfoodfacts") > 0,
-        "lookup": lambda bc: openfoodfacts_client.lookup_barcode(bc),
-        "outcome": lambda: None,
-    },
-    "upcitemdb-via-grocy": {
-        "label": "Grocy lookup plugin",
-        "enabled": lambda: config.priority("upcitemdb-via-grocy") > 0 and bool(grocy_client),
-        "lookup": lambda bc: grocy_client.external_lookup(bc),
-        "outcome": lambda: None,
-    },
-}
-
-
-def lookup_chain(barcode, skip=()):
+def lookup_chain(barcode):
     """
-    Try every enabled provider in order and return the first usable answer.
+    Ask Grocy. That is the whole function now, on purpose.
 
-    WRITES NOTHING. Every provider here is read-only -- the Grocy path uses
-    `external-lookup?add=false` precisely so resolution and creation stay
-    separate concerns.
+    This scanner is an input device. It owns no providers, no keys and no
+    ordering: Grocy's external-lookup is the resolution authority, its plugin
+    proxies to the Kitchen Stack add-on, and the engine there runs the chain,
+    applies the echo and empty-name rules, resolves the product presets, and
+    writes the attempt log. For one day the chain lived here instead, which
+    inverted the architecture -- the input device was the authority and the
+    inventory system was its client.
 
-    Extracted so the scan path and `GET /api/lookup/<barcode>` share ONE
-    implementation and ONE budget. Two copies of a provider chain is exactly the
-    fragmentation this is meant to remove, and it is also how a retry can
-    silently behave differently from a live scan.
+    is_gtin stays: it costs nothing, keeps garbage off the wire entirely, and
+    scanned QR codes never deserve an HTTP round trip.
 
-    `skip` drops providers by name. It exists for exactly one caller: Grocy's
-    lookup plugin, once it proxies to this route. Without it the plugin calls
-    here, the `upcitemdb-via-grocy` provider calls Grocy's external-lookup,
-    which calls the plugin, forever. A structural guard beats a note in a
-    comment telling someone not to enable two settings at once.
-
-    Returns (product | None, source_name | None, attempts).
+    Returns (product | None, source_name | None, attempts) -- the same shape
+    as before, so the scan path is untouched.
     """
-    external_product = None
-    database_name = None
-    attempts = []
-
-    def _note(att):
-        attempts.append({"provider": att.provider, "outcome": att.outcome,
-                         "latency_ms": att.latency_ms})
-
     if not is_gtin(barcode):
         logger.info(f"⏭  {barcode} is not a GTIN ({len(barcode)} digits) - "
-                    "skipping external lookup; a database would pad it and "
-                    "return someone else's product")
-        # ONE row for the whole chain, not one per provider: nothing was asked,
-        # so charging each provider a "miss" would distort every hit rate the
-        # reordering decision depends on.
-        lookup_logger.record(barcode, "(chain)", lg.SKIPPED_NON_GTIN)
-        attempts.append({"provider": "(chain)", "outcome": lg.SKIPPED_NON_GTIN,
-                         "latency_ms": 0})
-        return None, None, attempts
+                    "skipping external lookup")
+        return None, None, [{"provider": "(chain)",
+                             "outcome": "skipped_non_gtin", "latency_ms": 0}]
+    if not grocy_client:
+        return None, None, []
 
-    for provider in config.lookup_order:
-        if external_product:
-            break
-        if provider in skip:
-            continue
-        spec = PROVIDERS.get(provider)
-        if spec is None:
-            logger.warning(f"lookup_order names an unknown provider: {provider!r}")
-            continue
-        if not spec["enabled"]():
-            continue                    # listed but switched off; the check reports it
-        with lookup_logger.attempt(barcode, provider) as att:
-            external_product = spec["lookup"](barcode)
-            # Clients that report WHY keep an empty-title answer and a padded
-            # echo distinguishable from a plain miss; the rest get hit/miss.
-            outcome = spec["outcome"]()
-            att.outcome = outcome or (lg.HIT if external_product else lg.MISS)
-            if att.outcome == lg.ECHO_REJECT:
-                att.echo_ok = False
-            elif att.outcome == lg.HIT:
-                att.echo_ok = True
-        _note(att)
-        if external_product:
-            database_name = spec["label"]
-
-    # Grocy's "presets for new products" are read by the lookup PLUGIN and by
-    # nothing else on the API path. Calling providers directly means applying
-    # them here, or every scan lands on whichever location sorts first instead
-    # of Big Pantry. Only fills what a provider did not supply, so the plugin
-    # path keeps its own values when it is the one that answered.
-    if external_product and grocy_client:
-        try:
-            for key, value in grocy_client.get_product_presets().items():
-                external_product.setdefault(key, value)
-        except Exception as err:                                 # noqa: BLE001
-            logger.warning(f"could not resolve product presets: {err}")
-
-    return external_product, database_name, attempts
+    product = grocy_client.external_lookup(barcode)
+    if not product:
+        return None, None, [{"provider": "grocy", "outcome": "miss"}]
+    source = product.get("__source") or "Grocy lookup"
+    return product, source, [{"provider": "grocy", "outcome": "hit",
+                              "source": source}]
 
 
-openfoodfacts_client = OpenFoodFactsClient()
-upcdatabase_client = UPCDatabaseClient(config.upcdatabase_api_key)
-upcitemdb_client = UPCItemDbClient(config.upcitemdb_api_key)
-# One record per provider ATTEMPT. See lookup_log.py for why this ships before
-# the first bulk inventory rather than after it.
-lookup_logger = lg.LookupLog(config.lookup_log_path)
+
 
 # Store recent scans
 recent_scans = []
@@ -850,9 +668,7 @@ def lookup_barcode_readonly(barcode):
     code = (barcode or "").strip()
     if not code:
         return jsonify({"error": "no barcode"}), 400
-    # no_grocy=1 is how Grocy's plugin calls in without creating a cycle.
-    skip = ("upcitemdb-via-grocy",) if request.args.get("no_grocy") else ()
-    product, source, attempts = lookup_chain(code, skip=skip)
+    product, source, attempts = lookup_chain(code)
     return jsonify({
         "barcode": code,
         "found": product is not None,
@@ -864,18 +680,14 @@ def lookup_barcode_readonly(barcode):
 
 @app.route('/api/lookup-stats')
 def lookup_stats():
-    """
-    Per-provider aggregates over the attempt log.
-
-    Surfaces the data; deliberately does NOT reorder the chain. Automatic tuning
-    would shuffle providers on noisy data behind your back, and an opaque chain
-    is exactly what makes a wrong lookup hard to diagnose months later.
-    """
+    """Delegated to the Kitchen Stack engine, which owns the log now."""
     try:
         days = int(request.args.get('days', 30))
     except (TypeError, ValueError):
         days = 30
-    return jsonify(lookup_logger.stats(days=days))
+    resp = requests.get(f"{KITCHEN_STACK_URL}/api/lookup-stats",
+                        params={"days": days}, timeout=15)
+    return jsonify(resp.json()), resp.status_code
 
 
 @app.route('/api/status')
