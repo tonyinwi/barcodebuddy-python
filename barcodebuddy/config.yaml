@@ -2,7 +2,7 @@ name: "Kitchen Scanner"
 # Bump this on EVERY deploy. It is the only cheap way to tell which build is
 # running: the add-on is built from a git branch, so without a bump the version
 # string is identical before and after a push and a stale clone is invisible.
-version: "2.18.2-beta.5"
+version: "2.18.2-beta.6"
 # slug is deliberately unchanged from upstream: Home Assistant identifies an
 # installed add-on by slug, so renaming it would orphan an existing install
 # and its configuration.
@@ -30,6 +30,13 @@ devices:
   - "/dev/hidraw4:/dev/hidraw4:rwm"
 
 udev: true
+
+# /share, not this add-on's /data: /data is destroyed on uninstall, and the
+# lookup log is the evidence behind "is a paid provider worth paying for".
+# /share survives that and is included in Home Assistant's backups.
+map:
+  - type: share
+    read_only: false
 
 ports:
   "5000/tcp": 5000
@@ -62,6 +69,10 @@ options:
   barcode_add: "BBUDDY-ADD"
   barcode_consume: "BBUDDY-CONSUME"
   barcode_quantity_prefix: "BBUDDY-Q-"
+
+  # One record per provider ATTEMPT, so providers can be compared on the same
+  # input. Empty uses the default below.
+  lookup_log_path: "/share/kitchen-stack/lookup_log.jsonl"
 
   # Product Databases (for unknown barcodes)
   enable_openfoodfacts: false
@@ -100,6 +111,8 @@ schema:
   barcode_add: str
   barcode_consume: str
   barcode_quantity_prefix: str
+
+  lookup_log_path: str?
 
   # Product Databases
   enable_openfoodfacts: bool

@@ -45,6 +45,11 @@ class UPCDatabaseClient:
 
     def __init__(self, api_key: str = ""):
         self.api_key = (api_key or "").strip()
+        # Set on every lookup so the caller can log WHY, not just that it
+        # returned nothing. Both of this client's real bugs -- an empty title
+        # accepted as a hit, and a zero-padded code -- are invisible if the log
+        # only records hit/miss.
+        self.last_outcome = "miss"
 
     def lookup_barcode(self, barcode: str) -> Optional[Dict[Any, Any]]:
         """
@@ -55,6 +60,7 @@ class UPCDatabaseClient:
         """
         try:
             if not self.api_key:
+                self.last_outcome = "skipped_no_key"
                 logger.info("⏭  UPC Database has no API key configured - skipping "
                             "(set upcdatabase_api_key; the free tier is 100/day)")
                 return None
@@ -66,7 +72,12 @@ class UPCDatabaseClient:
 
             # UPC Database returns 404 if not found
             if response.status_code == 404:
+                self.last_outcome = "miss"
                 logger.info(f"❌ Not found in UPC Database: {barcode}")
+                return None
+            if response.status_code == 429:
+                self.last_outcome = "throttled"
+                logger.warning(f"⏳ UPC Database rate limited on {barcode}")
                 return None
 
             response.raise_for_status()
@@ -75,6 +86,7 @@ class UPCDatabaseClient:
             if data.get('success'):
                 returned = data.get('barcode', '')
                 if returned and not self._same_gtin(returned, barcode):
+                    self.last_outcome = "echo_reject"
                     logger.warning(f"⚠️  UPC Database answered for {returned} when asked "
                                    f"about {barcode} - different product, discarding")
                     return None
@@ -92,6 +104,7 @@ class UPCDatabaseClient:
                 name = (str(data.get('title') or '').strip()
                         or str(data.get('description') or '').strip())
                 if not name:
+                    self.last_outcome = "no_name"
                     logger.info(f"❌ UPC Database knows {barcode} but has no name for "
                                 "it (empty title) - treating as a miss")
                     return None
@@ -106,6 +119,7 @@ class UPCDatabaseClient:
                     'description': str(data.get('description') or '').strip()
                 }
 
+                self.last_outcome = "hit"
                 logger.info(f"✅ Found in UPC Database: {product_info['name']}")
                 return product_info
             else:
@@ -113,11 +127,14 @@ class UPCDatabaseClient:
                 # failure as "not found" is what hid this for weeks.
                 message = str((data.get("error") or {}).get("message", ""))
                 if "api key" in message.lower():
+                    self.last_outcome = "auth_error"
                     logger.error(f"🔑 UPC Database rejected the API key: {message}")
                 else:
+                    self.last_outcome = "miss"
                     logger.info(f"❌ Not found in UPC Database: {barcode}")
                 return None
 
         except requests.exceptions.RequestException as e:
+            self.last_outcome = "error"
             logger.error(f"UPC Database API error: {e}")
             return None

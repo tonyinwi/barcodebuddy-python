@@ -1,5 +1,41 @@
 # Changelog
 
+## Log every lookup attempt, so provider order can be decided on evidence
+
+One record per provider *attempt*, not per barcode -- the whole point is
+comparing providers on the same input. `/api/lookup-stats?days=30` returns
+per-provider attempts, hit rate, median and p95 latency, throttle count and
+echo failures.
+
+This ships **before** the first bulk pantry inventory rather than after it.
+That inventory is the best provider-comparison dataset this household will ever
+produce: hundreds of real barcodes hitting every provider in one burst. Without
+the log in place first that data is simply gone, and "which provider earns first
+position" stays a guess for another month of ordinary scanning.
+
+Outcomes are finer than hit/miss on purpose, because both of this fork's real
+lookup bugs were invisible under a coarse split: a provider answering
+`success: true` with an empty title, and a provider echoing back a zero-padded
+code. `no_name` and `echo_reject` are now distinct from `miss`, and
+`UPCDatabaseClient` reports `last_outcome` so the caller can log *why*.
+
+A non-GTIN barcode records ONE `skipped_non_gtin` row for the chain rather than
+one per provider -- charging each provider a miss for a lookup nobody performed
+would distort every hit rate the decision depends on. Skips are excluded from
+the `asked` denominator for the same reason.
+
+Written to `/share`, not the add-on's `/data`: `/data` is destroyed when an
+add-on is uninstalled, and this log is the evidence behind a purchasing
+decision. `/share` survives that and rides along in Home Assistant backups.
+
+Logging can never break a scan. Every write swallows its own errors, and the
+timing wrapper records an exception as `error` and then re-raises it.
+
+The stats endpoint deliberately does **not** reorder anything. Automatic tuning
+would shuffle providers on noisy data behind your back, and an opaque chain is
+exactly what makes a wrong lookup hard to diagnose months later.
+
+
 ## Renamed to "Kitchen Scanner"; version now bumps per deploy; build.yaml removed
 
 The add-on card and sidebar now read **Kitchen Scanner** / **Scanner**. The

@@ -101,6 +101,18 @@ class Config:
         return str(self._config.get('scanner_consume_device', '') or '').strip().lower()
 
     @property
+    def lookup_log_path(self) -> str:
+        """
+        Where the per-attempt lookup log is written.
+
+        /share, not /data: an add-on's /data is destroyed on uninstall, and this
+        log is the evidence behind "is a paid provider worth it". /share also
+        rides along in Home Assistant's backups.
+        """
+        return str(self._config.get('lookup_log_path', '')
+                   or '/share/kitchen-stack/lookup_log.jsonl')
+
+    @property
     def enable_upcdatabase(self) -> bool:
         """Check if UPC Database is enabled."""
         return self._config.get('enable_upcdatabase', True)

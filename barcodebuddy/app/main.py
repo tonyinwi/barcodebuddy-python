@@ -11,6 +11,7 @@ from grocy import GrocyClient
 from scanner import ScannerHandler, device_usb_id
 from openfoodfacts import OpenFoodFactsClient
 from upcdatabase import UPCDatabaseClient
+import lookup_log as lg
 from alias_client import AliasClient
 from pdf_generator import generate_quantity_barcodes_pdf
 from datetime import datetime
@@ -99,6 +100,9 @@ def is_gtin(barcode: str) -> bool:
 
 openfoodfacts_client = OpenFoodFactsClient()
 upcdatabase_client = UPCDatabaseClient(config.upcdatabase_api_key)
+# One record per provider ATTEMPT. See lookup_log.py for why this ships before
+# the first bulk inventory rather than after it.
+lookup_logger = lg.LookupLog(config.lookup_log_path)
 
 # Store recent scans
 recent_scans = []
@@ -357,19 +361,35 @@ def handle_barcode(barcode: str, device: str = None):
                     logger.info(f"⏭  {barcode} is not a GTIN ({len(barcode)} digits) - "
                                 "skipping external lookup; a database would pad it and "
                                 "return someone else's product")
+                    # ONE row for the whole chain, not one per provider: nothing was
+                    # asked, so charging each provider a "miss" would distort every
+                    # hit rate the reordering decision depends on.
+                    lookup_logger.record(barcode, "(chain)", lg.SKIPPED_NON_GTIN)
 
                 if grocy_client and lookupable and not external_product:
-                    external_product = grocy_client.external_lookup(barcode)
+                    with lookup_logger.attempt(barcode, "upcitemdb-via-grocy") as att:
+                        external_product = grocy_client.external_lookup(barcode)
+                        att.outcome = lg.HIT if external_product else lg.MISS
                     if external_product:
                         database_name = "Grocy lookup plugin"
 
                 if config.enable_openfoodfacts and lookupable and not external_product:
-                    external_product = openfoodfacts_client.lookup_barcode(barcode)
+                    with lookup_logger.attempt(barcode, "openfoodfacts") as att:
+                        external_product = openfoodfacts_client.lookup_barcode(barcode)
+                        att.outcome = lg.HIT if external_product else lg.MISS
                     if external_product:
                         database_name = "OpenFoodFacts"
 
                 if config.enable_upcdatabase and lookupable and not external_product:
-                    external_product = upcdatabase_client.lookup_barcode(barcode)
+                    with lookup_logger.attempt(barcode, "upcdatabase") as att:
+                        external_product = upcdatabase_client.lookup_barcode(barcode)
+                        # This client reports WHY, so an empty-title answer and a
+                        # zero-padded echo stay distinguishable from a plain miss.
+                        att.outcome = upcdatabase_client.last_outcome
+                        if att.outcome == lg.ECHO_REJECT:
+                            att.echo_ok = False
+                        elif att.outcome == lg.HIT:
+                            att.echo_ok = True
                     if external_product:
                         database_name = "UPC Database"
 
@@ -594,6 +614,22 @@ def manual_scan():
         return jsonify({'success': True})
 
     return jsonify({'success': False, 'error': 'No barcode provided'}), 400
+
+@app.route('/api/lookup-stats')
+def lookup_stats():
+    """
+    Per-provider aggregates over the attempt log.
+
+    Surfaces the data; deliberately does NOT reorder the chain. Automatic tuning
+    would shuffle providers on noisy data behind your back, and an opaque chain
+    is exactly what makes a wrong lookup hard to diagnose months later.
+    """
+    try:
+        days = int(request.args.get('days', 30))
+    except (TypeError, ValueError):
+        days = 30
+    return jsonify(lookup_logger.stats(days=days))
+
 
 @app.route('/api/status')
 def status():
