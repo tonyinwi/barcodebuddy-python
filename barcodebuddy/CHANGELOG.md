@@ -1,5 +1,33 @@
 # Changelog
 
+## A read-only lookup route, and one chain behind both callers
+
+`GET /api/lookup/<barcode>` resolves a barcode without touching stock or
+creating anything. `/api/scan` remains the only write path.
+
+The provider chain is extracted into `lookup_chain()` and both callers now go
+through it. Two copies of a chain is the fragmentation this work exists to
+remove, and it is also how a retry silently starts behaving differently from a
+live scan -- the retry tool currently keeps its own, which is why the same
+barcode can resolve one way when scanned and another way when retried.
+
+Every provider in the chain was already read-only: the Grocy path uses
+`external-lookup?add=false` precisely so resolution and creation stay separate.
+
+Three things this unlocks:
+
+  * retries and live scans share one implementation and one provider budget
+  * a lookup fix can be verified by *behaviour* without writing to the
+    household's real inventory. That was impossible before -- confirming an
+    empty-title bug meant correlating git push times against Docker build lines,
+    because every path into this add-on wrote to Grocy
+  * a manual probe contributes to the same provider evidence as a real scan,
+    since the route logs attempts like any other caller
+
+The response reports which provider answered and what each one did on the way,
+so a miss can be attributed rather than guessed at.
+
+
 ## Log every lookup attempt, so provider order can be decided on evidence
 
 One record per provider *attempt*, not per barcode -- the whole point is

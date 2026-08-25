@@ -50,6 +50,7 @@ class _Attempt:
         self.outcome = MISS
         self.echo_ok = None
         self.detail = None
+        self.latency_ms = 0
         self._t0 = 0.0
 
     def __enter__(self):
@@ -60,9 +61,9 @@ class _Attempt:
         if exc_type is not None:
             self.outcome = ERROR
             self.detail = f"{exc_type.__name__}: {exc}"[:120]
+        self.latency_ms = int((time.monotonic() - self._t0) * 1000)
         self._log.record(self.barcode, self.provider, self.outcome,
-                         int((time.monotonic() - self._t0) * 1000),
-                         echo_ok=self.echo_ok, detail=self.detail)
+                         self.latency_ms, echo_ok=self.echo_ok, detail=self.detail)
         return False        # never swallow the caller's exception
 
 

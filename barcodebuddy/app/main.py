@@ -98,6 +98,74 @@ def is_gtin(barcode: str) -> bool:
     return code.isdigit() and len(code) in GTIN_LENGTHS
 
 
+def lookup_chain(barcode):
+    """
+    Try every enabled provider in order and return the first usable answer.
+
+    WRITES NOTHING. Every provider here is read-only -- the Grocy path uses
+    `external-lookup?add=false` precisely so resolution and creation stay
+    separate concerns.
+
+    Extracted so the scan path and `GET /api/lookup/<barcode>` share ONE
+    implementation and ONE budget. Two copies of a provider chain is exactly the
+    fragmentation this is meant to remove, and it is also how a retry can
+    silently behave differently from a live scan.
+
+    Returns (product | None, source_name | None, attempts).
+    """
+    external_product = None
+    database_name = None
+    attempts = []
+
+    def _note(att):
+        attempts.append({"provider": att.provider, "outcome": att.outcome,
+                         "latency_ms": att.latency_ms})
+
+    if not is_gtin(barcode):
+        logger.info(f"⏭  {barcode} is not a GTIN ({len(barcode)} digits) - "
+                    "skipping external lookup; a database would pad it and "
+                    "return someone else's product")
+        # ONE row for the whole chain, not one per provider: nothing was asked,
+        # so charging each provider a "miss" would distort every hit rate the
+        # reordering decision depends on.
+        lookup_logger.record(barcode, "(chain)", lg.SKIPPED_NON_GTIN)
+        attempts.append({"provider": "(chain)", "outcome": lg.SKIPPED_NON_GTIN,
+                         "latency_ms": 0})
+        return None, None, attempts
+
+    if grocy_client and not external_product:
+        with lookup_logger.attempt(barcode, "upcitemdb-via-grocy") as att:
+            external_product = grocy_client.external_lookup(barcode)
+            att.outcome = lg.HIT if external_product else lg.MISS
+        _note(att)
+        if external_product:
+            database_name = "Grocy lookup plugin"
+
+    if config.enable_openfoodfacts and not external_product:
+        with lookup_logger.attempt(barcode, "openfoodfacts") as att:
+            external_product = openfoodfacts_client.lookup_barcode(barcode)
+            att.outcome = lg.HIT if external_product else lg.MISS
+        _note(att)
+        if external_product:
+            database_name = "OpenFoodFacts"
+
+    if config.enable_upcdatabase and not external_product:
+        with lookup_logger.attempt(barcode, "upcdatabase") as att:
+            external_product = upcdatabase_client.lookup_barcode(barcode)
+            # This client reports WHY, so an empty-title answer and a zero-padded
+            # echo stay distinguishable from a plain miss.
+            att.outcome = upcdatabase_client.last_outcome
+            if att.outcome == lg.ECHO_REJECT:
+                att.echo_ok = False
+            elif att.outcome == lg.HIT:
+                att.echo_ok = True
+        _note(att)
+        if external_product:
+            database_name = "UPC Database"
+
+    return external_product, database_name, attempts
+
+
 openfoodfacts_client = OpenFoodFactsClient()
 upcdatabase_client = UPCDatabaseClient(config.upcdatabase_api_key)
 # One record per provider ATTEMPT. See lookup_log.py for why this ships before
@@ -356,42 +424,7 @@ def handle_barcode(barcode: str, device: str = None):
                 external_product = None
                 database_name = None
 
-                lookupable = is_gtin(barcode)
-                if not lookupable:
-                    logger.info(f"⏭  {barcode} is not a GTIN ({len(barcode)} digits) - "
-                                "skipping external lookup; a database would pad it and "
-                                "return someone else's product")
-                    # ONE row for the whole chain, not one per provider: nothing was
-                    # asked, so charging each provider a "miss" would distort every
-                    # hit rate the reordering decision depends on.
-                    lookup_logger.record(barcode, "(chain)", lg.SKIPPED_NON_GTIN)
-
-                if grocy_client and lookupable and not external_product:
-                    with lookup_logger.attempt(barcode, "upcitemdb-via-grocy") as att:
-                        external_product = grocy_client.external_lookup(barcode)
-                        att.outcome = lg.HIT if external_product else lg.MISS
-                    if external_product:
-                        database_name = "Grocy lookup plugin"
-
-                if config.enable_openfoodfacts and lookupable and not external_product:
-                    with lookup_logger.attempt(barcode, "openfoodfacts") as att:
-                        external_product = openfoodfacts_client.lookup_barcode(barcode)
-                        att.outcome = lg.HIT if external_product else lg.MISS
-                    if external_product:
-                        database_name = "OpenFoodFacts"
-
-                if config.enable_upcdatabase and lookupable and not external_product:
-                    with lookup_logger.attempt(barcode, "upcdatabase") as att:
-                        external_product = upcdatabase_client.lookup_barcode(barcode)
-                        # This client reports WHY, so an empty-title answer and a
-                        # zero-padded echo stay distinguishable from a plain miss.
-                        att.outcome = upcdatabase_client.last_outcome
-                        if att.outcome == lg.ECHO_REJECT:
-                            att.echo_ok = False
-                        elif att.outcome == lg.HIT:
-                            att.echo_ok = True
-                    if external_product:
-                        database_name = "UPC Database"
+                external_product, database_name, _attempts = lookup_chain(barcode)
 
                 if external_product:
                     # Step 4: Found in external database - auto-create and stock it.
@@ -614,6 +647,37 @@ def manual_scan():
         return jsonify({'success': True})
 
     return jsonify({'success': False, 'error': 'No barcode provided'}), 400
+
+@app.route('/api/lookup/<barcode>')
+def lookup_barcode_readonly(barcode):
+    """
+    Resolve a barcode WITHOUT touching stock or creating anything.
+
+    `/api/scan` is the only write path and always was; this is the read-only
+    twin. It exists for three reasons:
+
+      * retries (relookup) and live scans can share one implementation and one
+        provider budget, instead of the retry tool keeping its own chain
+      * a lookup fix can be verified by behaviour without writing to the
+        household's real inventory -- which was impossible before, and is why an
+        empty-title bug had to be confirmed from log timestamps
+      * every attempt is logged, so a manual probe contributes to the same
+        provider evidence as a real scan
+
+    Returns which provider answered and what each one did on the way.
+    """
+    code = (barcode or "").strip()
+    if not code:
+        return jsonify({"error": "no barcode"}), 400
+    product, source, attempts = lookup_chain(code)
+    return jsonify({
+        "barcode": code,
+        "found": product is not None,
+        "source": source,
+        "product": product,
+        "attempts": attempts,
+    })
+
 
 @app.route('/api/lookup-stats')
 def lookup_stats():
