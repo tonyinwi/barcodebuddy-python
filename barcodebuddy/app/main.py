@@ -126,39 +126,47 @@ def validate_providers(days=7):
 
     rows = []
 
-    rows.append({
-        "provider": "upcitemdb",
-        "enabled": bool(config.enable_upcitemdb),
-        "needs_key": False,
-        "key_set": True,
-        "note": ("paid production endpoint" if config.upcitemdb_api_key
-                 else "free trial endpoint, ~100/day, no signup"),
-        "recent": recent("upcitemdb"),
-    })
-    rows.append({
-        "provider": "upcitemdb-via-grocy",
-        "enabled": bool(config.enable_grocy_lookup and grocy_client),
-        "needs_key": False,
-        "key_set": True,
-        "note": "OLD path via the PHP plugin -- rollback switch, off by default",
-        "recent": recent("upcitemdb-via-grocy"),
-    })
-    rows.append({
-        "provider": "openfoodfacts",
-        "enabled": bool(config.enable_openfoodfacts),
-        "needs_key": False,
-        "key_set": True,
-        "note": "no key required",
-        "recent": recent("openfoodfacts"),
-    })
-    rows.append({
-        "provider": "upcdatabase",
-        "enabled": bool(config.enable_upcdatabase),
-        "needs_key": True,
-        "key_set": bool(config.upcdatabase_api_key),
-        "note": "free tier is 100/day",
-        "recent": recent("upcdatabase"),
-    })
+    meta = {
+        "upcitemdb": (False, True,
+                      "paid production endpoint" if config.upcitemdb_api_key
+                      else "free trial endpoint, ~100/day, BURST-THROTTLES"),
+        "upcdatabase": (True, bool(config.upcdatabase_api_key), "free tier is 100/day"),
+        "openfoodfacts": (False, True, "no key required"),
+        "upcitemdb-via-grocy": (False, True,
+                                "OLD path via the PHP plugin -- rollback switch"),
+    }
+    order = config.lookup_order
+
+    # In configured order first, so the log reads like the chain runs.
+    for pos, name in enumerate(order, 1):
+        spec = PROVIDERS.get(name)
+        needs_key, key_set, note = meta.get(name, (False, True, ""))
+        rows.append({
+            "provider": name,
+            "position": pos,
+            "in_chain": True,
+            "enabled": bool(spec and spec["enabled"]()),
+            "needs_key": needs_key,
+            "key_set": key_set,
+            "note": note if spec else "UNKNOWN PROVIDER NAME -- never called",
+            "recent": recent(name),
+        })
+    # Then anything switched on but left out of the order -- configured and
+    # inert, which looks identical to a provider that never matches.
+    for name, spec in PROVIDERS.items():
+        if name in order:
+            continue
+        needs_key, key_set, note = meta.get(name, (False, True, ""))
+        rows.append({
+            "provider": name,
+            "position": None,
+            "in_chain": False,
+            "enabled": bool(spec["enabled"]()),
+            "needs_key": needs_key,
+            "key_set": key_set,
+            "note": note,
+            "recent": recent(name),
+        })
     rows.append({
         "provider": "usda",
         "enabled": False,      # deliberately not in the chain -- see BACKLOG.md
@@ -170,6 +178,10 @@ def validate_providers(days=7):
 
     for r in rows:
         warns = []
+        if r.get("in_chain") and not r["enabled"]:
+            warns.append("listed in lookup_order but SWITCHED OFF -- never called")
+        if not r.get("in_chain") and r["enabled"]:
+            warns.append("enabled but NOT in lookup_order -- never called")
         if r["enabled"] and r["needs_key"] and not r["key_set"]:
             warns.append("ENABLED BUT NO KEY -- every lookup is skipped silently")
         rec = r["recent"]
@@ -198,12 +210,43 @@ def log_provider_check():
     logger.info("🔎 Provider check (no lookups spent):")
     for r in rows:
         state = "ENABLED " if r["enabled"] else "disabled"
+        pos = f"{r['position']}." if r.get("position") else " -"
         rec = r["recent"]
         ev = (f"last 7d: {rec['asked']} asked, {rec['hits']} hit "
               f"({rec['hit_rate_pct']}%), median {rec['median_ms']}ms") if rec else "no recent attempts"
-        logger.info(f"   {state} {r['provider']:22s} {ev}   [{r['note']}]")
+        logger.info(f"   {pos:>3} {state} {r['provider']:22s} {ev}   [{r['note']}]")
         for w in r["warnings"]:
             logger.warning(f"      ⚠  {r['provider']}: {w}")
+
+
+# The chain is data, not a stack of if-statements, so the order can come from
+# configuration. Adding a provider is a dict entry; reordering is a UI edit.
+PROVIDERS = {
+    "upcitemdb": {
+        "label": "UPCitemdb",
+        "enabled": lambda: bool(config.enable_upcitemdb),
+        "lookup": lambda bc: upcitemdb_client.lookup_barcode(bc),
+        "outcome": lambda: upcitemdb_client.last_outcome,
+    },
+    "upcdatabase": {
+        "label": "UPC Database",
+        "enabled": lambda: bool(config.enable_upcdatabase),
+        "lookup": lambda bc: upcdatabase_client.lookup_barcode(bc),
+        "outcome": lambda: upcdatabase_client.last_outcome,
+    },
+    "openfoodfacts": {
+        "label": "OpenFoodFacts",
+        "enabled": lambda: bool(config.enable_openfoodfacts),
+        "lookup": lambda bc: openfoodfacts_client.lookup_barcode(bc),
+        "outcome": lambda: None,
+    },
+    "upcitemdb-via-grocy": {
+        "label": "Grocy lookup plugin",
+        "enabled": lambda: bool(config.enable_grocy_lookup and grocy_client),
+        "lookup": lambda bc: grocy_client.external_lookup(bc),
+        "outcome": lambda: None,
+    },
+}
 
 
 def lookup_chain(barcode):
@@ -241,50 +284,28 @@ def lookup_chain(barcode):
                          "latency_ms": 0})
         return None, None, attempts
 
-    if config.enable_upcitemdb and not external_product:
-        with lookup_logger.attempt(barcode, "upcitemdb") as att:
-            external_product = upcitemdb_client.lookup_barcode(barcode)
-            att.outcome = upcitemdb_client.last_outcome
+    for provider in config.lookup_order:
+        if external_product:
+            break
+        spec = PROVIDERS.get(provider)
+        if spec is None:
+            logger.warning(f"lookup_order names an unknown provider: {provider!r}")
+            continue
+        if not spec["enabled"]():
+            continue                    # listed but switched off; the check reports it
+        with lookup_logger.attempt(barcode, provider) as att:
+            external_product = spec["lookup"](barcode)
+            # Clients that report WHY keep an empty-title answer and a padded
+            # echo distinguishable from a plain miss; the rest get hit/miss.
+            outcome = spec["outcome"]()
+            att.outcome = outcome or (lg.HIT if external_product else lg.MISS)
             if att.outcome == lg.ECHO_REJECT:
                 att.echo_ok = False
             elif att.outcome == lg.HIT:
                 att.echo_ok = True
         _note(att)
         if external_product:
-            database_name = "UPCitemdb"
-
-    # The OLD path, kept as a rollback switch. Off by default: it reached the
-    # same provider through Grocy's PHP plugin, which is why provider order
-    # could never be configurable -- half the chain lived in another runtime.
-    if config.enable_grocy_lookup and grocy_client and not external_product:
-        with lookup_logger.attempt(barcode, "upcitemdb-via-grocy") as att:
-            external_product = grocy_client.external_lookup(barcode)
-            att.outcome = lg.HIT if external_product else lg.MISS
-        _note(att)
-        if external_product:
-            database_name = "Grocy lookup plugin"
-
-    if config.enable_openfoodfacts and not external_product:
-        with lookup_logger.attempt(barcode, "openfoodfacts") as att:
-            external_product = openfoodfacts_client.lookup_barcode(barcode)
-            att.outcome = lg.HIT if external_product else lg.MISS
-        _note(att)
-        if external_product:
-            database_name = "OpenFoodFacts"
-
-    if config.enable_upcdatabase and not external_product:
-        with lookup_logger.attempt(barcode, "upcdatabase") as att:
-            external_product = upcdatabase_client.lookup_barcode(barcode)
-            # This client reports WHY, so an empty-title answer and a zero-padded
-            # echo stay distinguishable from a plain miss.
-            att.outcome = upcdatabase_client.last_outcome
-            if att.outcome == lg.ECHO_REJECT:
-                att.echo_ok = False
-            elif att.outcome == lg.HIT:
-                att.echo_ok = True
-        _note(att)
-        if external_product:
-            database_name = "UPC Database"
+            database_name = spec["label"]
 
     # Grocy's "presets for new products" are read by the lookup PLUGIN and by
     # nothing else on the API path. Calling providers directly means applying

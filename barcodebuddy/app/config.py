@@ -101,6 +101,28 @@ class Config:
         return str(self._config.get('scanner_consume_device', '') or '').strip().lower()
 
     @property
+    def lookup_order(self) -> list:
+        """
+        The chain, in order. This IS the sequence providers are tried in.
+
+        A provider not listed here is never called, whatever its enable_* flag
+        says. The flags remain as a veto -- an off switch that does not require
+        editing the order -- and a provider that is listed but switched off is
+        reported by the provider check rather than silently skipped, because
+        "configured but inert" is the failure mode that already cost weeks here.
+
+        Default puts upcdatabase first on measured evidence, not taste:
+        UPCitemdb's trial endpoint throttled 6 of 10 attempts, and every throttle
+        falls through to upcdatabase anyway -- so leading with it buys a wasted
+        call before the slow one. upcdatabase also had the better hit rate
+        (50% vs 37%). UPCitemdb is ~7x faster and worth promoting the moment a
+        paid key removes the throttling.
+        """
+        order = self._config.get('lookup_order') or []
+        order = [str(x).strip() for x in order if str(x).strip()]
+        return order or ['upcdatabase', 'upcitemdb']
+
+    @property
     def enable_upcitemdb(self) -> bool:
         """UPCitemdb, called directly rather than through Grocy's plugin."""
         return self._config.get('enable_upcitemdb', True)

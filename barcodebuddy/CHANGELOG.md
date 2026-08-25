@@ -1,5 +1,36 @@
 # Changelog
 
+## Provider order is configuration, and UPCitemdb is no longer first
+
+`lookup_order` in the add-on options is now the chain. Providers are tried top
+to bottom and the first usable answer wins. The chain became a dict of provider
+descriptors rather than a stack of if-statements, so adding one is an entry and
+reordering one is a UI edit.
+
+**upcdatabase leads now, on measured evidence rather than taste.** UPCitemdb's
+trial endpoint throttled **6 of 10** attempts -- from calls being close
+together, not a daily cap -- and every throttle falls through to upcdatabase
+anyway. Leading with it therefore buys a wasted call before the slow one.
+upcdatabase also had the better hit rate over the same window, 50% against 37%.
+
+UPCitemdb is roughly **7x faster** (171ms against 1232ms) and deserves to lead
+the moment a paid key removes the throttling. That is one line of configuration
+now, which is the whole point.
+
+A provider not listed in `lookup_order` is **never called**, whatever its
+`enable_*` switch says. The flags survive as a veto -- an off switch that does
+not require editing the order -- and the provider check now reports both halves
+of that redundancy explicitly:
+
+  * listed in the order but switched off
+  * switched on but missing from the order
+
+Both look identical to "a provider that never matches anything" from the
+outside, and that exact ambiguity is what let upcdatabase sit dead for weeks.
+The startup log prints the chain in order, numbered, so what you read is the
+order that runs.
+
+
 ## UPCitemdb is called directly; the chain finally lives in one runtime
 
 UPCitemdb used to be reached through Grocy's `external-lookup`, i.e. through a

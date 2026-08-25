@@ -2,7 +2,7 @@ name: "Kitchen Scanner"
 # Bump this on EVERY deploy. It is the only cheap way to tell which build is
 # running: the add-on is built from a git branch, so without a bump the version
 # string is identical before and after a push and a stale clone is invisible.
-version: "2.18.2-beta.10"
+version: "2.18.2-beta.11"
 # slug is deliberately unchanged from upstream: Home Assistant identifies an
 # installed add-on by slug, so renaming it would orphan an existing install
 # and its configuration.
@@ -74,6 +74,19 @@ options:
   # input. Empty uses the default below.
   lookup_log_path: "/share/kitchen-stack/lookup_log.jsonl"
 
+  # THE CHAIN, IN ORDER. Providers are tried top to bottom and the first usable
+  # answer wins. A provider not listed here is never called, whatever its
+  # enable_* switch says -- and the provider check reports that rather than
+  # letting it look like a provider that simply never matches.
+  #
+  # upcdatabase leads on measured evidence: UPCitemdb's trial endpoint throttled
+  # 6 of 10 attempts, and every throttle falls through to upcdatabase anyway, so
+  # leading with it just buys a wasted call. Promote UPCitemdb the moment a paid
+  # key removes the throttling -- it is roughly 7x faster.
+  lookup_order:
+    - upcdatabase
+    - upcitemdb
+
   # Product Databases (for unknown barcodes)
   #
   # UPCitemdb is now called DIRECTLY. It used to be reached through Grocy's
@@ -133,6 +146,10 @@ schema:
   barcode_quantity_prefix: str
 
   lookup_log_path: str?
+
+  # The chain, in order. Drag to reorder in the UI.
+  lookup_order:
+    - list(upcitemdb|upcdatabase|openfoodfacts|upcitemdb-via-grocy)
 
   # Product Databases
   enable_upcitemdb: bool
