@@ -2,7 +2,7 @@ name: "Kitchen Scanner"
 # Bump this on EVERY deploy. It is the only cheap way to tell which build is
 # running: the add-on is built from a git branch, so without a bump the version
 # string is identical before and after a push and a stale clone is invisible.
-version: "2.18.2-beta.7"
+version: "2.18.2-beta.8"
 # slug is deliberately unchanged from upstream: Home Assistant identifies an
 # installed add-on by slug, so renaming it would orphan an existing install
 # and its configuration.
@@ -82,6 +82,14 @@ options:
   # Free tier is 100/day. https://upcdatabase.org/api
   upcdatabase_api_key: ""
 
+  # USDA FoodData Central. STORED BUT NOT YET USED -- there is deliberately no
+  # USDA provider in the chain. Measured 2026-08-25 against nine real barcodes:
+  # 2 hits, both ALREADY resolved by a provider twice as fast, and zero added
+  # coverage. See BACKLOG.md before wiring it in. The key lives here so it is in
+  # one place when that decision is revisited, and so the remaining fuzzy-risk
+  # probe can be finished. Free: https://fdc.nal.usda.gov/api-key-signup.html
+  usda_api_key: ""
+
   # Language
   language: "en"
 
@@ -118,6 +126,7 @@ schema:
   enable_openfoodfacts: bool
   enable_upcdatabase: bool
   upcdatabase_api_key: str?
+  usda_api_key: str?
 
   # Language (en/de/fr/es)
   language: str

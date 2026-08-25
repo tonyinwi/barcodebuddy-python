@@ -101,6 +101,20 @@ class Config:
         return str(self._config.get('scanner_consume_device', '') or '').strip().lower()
 
     @property
+    def usda_api_key(self) -> str:
+        """
+        USDA FoodData Central key. STORED, NOT YET USED.
+
+        There is deliberately no USDA provider in the chain: measured against
+        nine real barcodes it hit 2, both already resolved by a provider twice
+        as fast, and added zero coverage. The key lives here so it is in one
+        place when that decision is revisited, and so the outstanding fuzzy-risk
+        probe can be finished -- `foods/search?query=<upc>` is a text search and
+        can return *a* food for anything.
+        """
+        return str(self._config.get('usda_api_key', '') or '').strip()
+
+    @property
     def lookup_log_path(self) -> str:
         """
         Where the per-attempt lookup log is written.
