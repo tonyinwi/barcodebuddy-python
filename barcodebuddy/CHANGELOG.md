@@ -1,5 +1,36 @@
 # Changelog
 
+## Validate the providers at startup, and say so in the log
+
+Every start now prints what is actually wired up and whether it is actually
+working, and `GET /api/providers` answers the same question on demand.
+
+**It spends no lookup quota.** A synthetic ping would have been worse than
+useless: upcdatabase.org sat dead for weeks answering HTTP 200 with
+`success:false`, so a reachability probe would have reported "fine". The check
+uses two free sources instead -- static configuration, and what the attempt log
+says each provider actually did over the last seven days.
+
+The static half catches the failure seen here for real: a provider **enabled
+with an empty key**, which is skipped silently on every single scan and looks
+exactly like a provider that simply never matches anything.
+
+The evidence half catches the slower rot. `0 hits in 200 attempts over 7d` is
+the line that shouts; so are a rejected key, repeated throttling, and any echo
+mismatch, which means a provider handed back a different product than the one
+asked about.
+
+Sample output:
+
+```
+🔎 Provider check (no lookups spent):
+   ENABLED  upcitemdb-via-grocy    last 7d: 6 asked, 2 hit (33.3%), median 171ms
+   disabled openfoodfacts          no recent attempts
+   ENABLED  upcdatabase            last 7d: 5 asked, 2 hit (40.0%), median 1239ms
+   disabled usda                   no recent attempts   [key stored, provider intentionally NOT in the chain]
+```
+
+
 ## A read-only lookup route, and one chain behind both callers
 
 `GET /api/lookup/<barcode>` resolves a barcode without touching stock or

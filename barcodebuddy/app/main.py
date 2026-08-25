@@ -98,6 +98,105 @@ def is_gtin(barcode: str) -> bool:
     return code.isdigit() and len(code) in GTIN_LENGTHS
 
 
+def validate_providers(days=7):
+    """
+    What is actually wired up, and is it actually working?
+
+    Deliberately spends NO lookup quota. Two cheap sources instead:
+
+      * static configuration -- enabled, and does it have the key it needs?
+      * the attempt log -- what did this provider really do lately?
+
+    The second matters more than a synthetic probe would. upcdatabase.org sat
+    dead for weeks returning HTTP 200 success:false; a startup ping would have
+    said "reachable" and told you nothing. "0 hits in 200 attempts" is the line
+    that shouts.
+
+    The static half catches the other failure seen here: a provider ENABLED with
+    an EMPTY key, which is skipped silently on every single scan.
+    """
+    stats = lookup_logger.stats(days=days).get("providers", {})
+
+    def recent(name):
+        p = stats.get(name)
+        if not p or not p.get("asked"):
+            return None
+        return p
+
+    rows = []
+
+    rows.append({
+        "provider": "upcitemdb-via-grocy",
+        "enabled": bool(grocy_client),
+        "needs_key": False,
+        "key_set": True,
+        "note": "via Grocy external-lookup plugin" if grocy_client
+                else "Grocy not configured -- this provider is inert",
+        "recent": recent("upcitemdb-via-grocy"),
+    })
+    rows.append({
+        "provider": "openfoodfacts",
+        "enabled": bool(config.enable_openfoodfacts),
+        "needs_key": False,
+        "key_set": True,
+        "note": "no key required",
+        "recent": recent("openfoodfacts"),
+    })
+    rows.append({
+        "provider": "upcdatabase",
+        "enabled": bool(config.enable_upcdatabase),
+        "needs_key": True,
+        "key_set": bool(config.upcdatabase_api_key),
+        "note": "free tier is 100/day",
+        "recent": recent("upcdatabase"),
+    })
+    rows.append({
+        "provider": "usda",
+        "enabled": False,      # deliberately not in the chain -- see BACKLOG.md
+        "needs_key": True,
+        "key_set": bool(config.usda_api_key),
+        "note": "key stored, provider intentionally NOT in the chain",
+        "recent": recent("usda"),
+    })
+
+    for r in rows:
+        warns = []
+        if r["enabled"] and r["needs_key"] and not r["key_set"]:
+            warns.append("ENABLED BUT NO KEY -- every lookup is skipped silently")
+        rec = r["recent"]
+        if rec:
+            if rec["hits"] == 0 and rec["asked"] >= 10:
+                warns.append(f"0 hits in {rec['asked']} attempts over {days}d -- broken?")
+            if rec["outcomes"].get("auth_error"):
+                warns.append("key was REJECTED recently")
+            if rec["outcomes"].get("throttled"):
+                warns.append(f"throttled {rec['outcomes']['throttled']}x")
+            if rec.get("echo_failures"):
+                warns.append(f"{rec['echo_failures']} echo mismatch(es) -- wrong product returned")
+        elif r["enabled"]:
+            warns.append(f"no attempts logged in {days}d")
+        r["warnings"] = warns
+    return rows
+
+
+def log_provider_check():
+    """Print the provider check at startup, so a dead provider is obvious."""
+    try:
+        rows = validate_providers()
+    except Exception as err:                                     # noqa: BLE001
+        logger.warning(f"provider check failed: {err}")
+        return
+    logger.info("🔎 Provider check (no lookups spent):")
+    for r in rows:
+        state = "ENABLED " if r["enabled"] else "disabled"
+        rec = r["recent"]
+        ev = (f"last 7d: {rec['asked']} asked, {rec['hits']} hit "
+              f"({rec['hit_rate_pct']}%), median {rec['median_ms']}ms") if rec else "no recent attempts"
+        logger.info(f"   {state} {r['provider']:22s} {ev}   [{r['note']}]")
+        for w in r["warnings"]:
+            logger.warning(f"      ⚠  {r['provider']}: {w}")
+
+
 def lookup_chain(barcode):
     """
     Try every enabled provider in order and return the first usable answer.
@@ -648,6 +747,16 @@ def manual_scan():
 
     return jsonify({'success': False, 'error': 'No barcode provided'}), 400
 
+@app.route('/api/providers')
+def providers():
+    """The same check the startup log prints, on demand. Spends no quota."""
+    try:
+        days = int(request.args.get('days', 7))
+    except (TypeError, ValueError):
+        days = 7
+    return jsonify({"days": days, "providers": validate_providers(days=days)})
+
+
 @app.route('/api/lookup/<barcode>')
 def lookup_barcode_readonly(barcode):
     """
@@ -1122,5 +1231,6 @@ if __name__ == '__main__':
     logger.info("🚀 Starting Barcode Buddy (Python)")
     logger.info(f"📱 Scanner: Auto-detecting all available devices")
     logger.info(f"🔗 Grocy: {'✅ Configured' if config.has_grocy else '❌ Not configured'}")
+    log_provider_check()
 
     app.run(host='0.0.0.0', port=5000)
