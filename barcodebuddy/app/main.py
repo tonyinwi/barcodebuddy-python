@@ -255,7 +255,7 @@ PROVIDERS = {
 }
 
 
-def lookup_chain(barcode):
+def lookup_chain(barcode, skip=()):
     """
     Try every enabled provider in order and return the first usable answer.
 
@@ -267,6 +267,12 @@ def lookup_chain(barcode):
     implementation and ONE budget. Two copies of a provider chain is exactly the
     fragmentation this is meant to remove, and it is also how a retry can
     silently behave differently from a live scan.
+
+    `skip` drops providers by name. It exists for exactly one caller: Grocy's
+    lookup plugin, once it proxies to this route. Without it the plugin calls
+    here, the `upcitemdb-via-grocy` provider calls Grocy's external-lookup,
+    which calls the plugin, forever. A structural guard beats a note in a
+    comment telling someone not to enable two settings at once.
 
     Returns (product | None, source_name | None, attempts).
     """
@@ -293,6 +299,8 @@ def lookup_chain(barcode):
     for provider in config.lookup_order:
         if external_product:
             break
+        if provider in skip:
+            continue
         spec = PROVIDERS.get(provider)
         if spec is None:
             logger.warning(f"lookup_order names an unknown provider: {provider!r}")
@@ -842,7 +850,9 @@ def lookup_barcode_readonly(barcode):
     code = (barcode or "").strip()
     if not code:
         return jsonify({"error": "no barcode"}), 400
-    product, source, attempts = lookup_chain(code)
+    # no_grocy=1 is how Grocy's plugin calls in without creating a cycle.
+    skip = ("upcitemdb-via-grocy",) if request.args.get("no_grocy") else ()
+    product, source, attempts = lookup_chain(code, skip=skip)
     return jsonify({
         "barcode": code,
         "found": product is not None,
