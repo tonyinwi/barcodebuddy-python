@@ -75,6 +75,18 @@ class LocationTracker:
             self._by_device[self._key(device)] = {
                 "id": location_id, "name": location_name, "at": time.monotonic()}
 
+    def clear(self, device):
+        """
+        Forget this gun's location entirely.
+
+        Used when a location code is rejected: leaving the previous shelf in
+        effect would send the next fifty products there. Storing a None-valued
+        entry instead would fall back correctly but leave junk in the UI, so the
+        entry is removed rather than blanked.
+        """
+        with self._lock:
+            self._by_device.pop(self._key(device), None)
+
     def touch(self, device):
         """A product scan counts as activity: the idle clock is per gun."""
         with self._lock:

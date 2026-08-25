@@ -301,7 +301,7 @@ def handle_barcode(barcode: str, device: str = None):
             # Never fall back to a guess: an unmatched location code must not
             # quietly leave the previous shelf in effect, because the next
             # fifty scans would land there.
-            location_tracker.set(device, None, None)
+            location_tracker.clear(device)
             scan_result['status'] = 'error'
             scan_result['message'] = f"❌ {err or 'unknown location code'}"
             logger.error(f"📍 location barcode rejected: {barcode} -- {err}")
