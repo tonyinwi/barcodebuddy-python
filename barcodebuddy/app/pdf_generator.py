@@ -8,6 +8,27 @@ from reportlab.graphics import renderPDF
 from reportlab.graphics.shapes import Drawing
 
 
+def _qr_drawing(text, size):
+    """
+    A QR fitted to `size` points square, whatever its natural bounds.
+
+    THE BUG THIS FIXES: a QrCodeWidget carries its own bounds -- 90.7pt for
+    these payloads -- and adding it to a `Drawing(70, 70)` does not scale it, it
+    CLIPS it. A clipped QR is not a small QR, it is an unscannable one, and it
+    looks fine on screen until someone points a scanner at a printed sheet.
+
+    Scaling via a transform rather than by setting barWidth/barHeight means this
+    stays correct if a longer payload ever changes the module count.
+    """
+    w = qr.QrCodeWidget(text)
+    b = w.getBounds()
+    bw, bh = (b[2] - b[0]) or 1, (b[3] - b[1]) or 1
+    d = Drawing(size, size, transform=[size / bw, 0, 0, size / bh,
+                                       -b[0] * size / bw, -b[1] * size / bh])
+    d.add(w)
+    return d
+
+
 def _create_barcode(barcode_text, barcode_format='code128'):
     """Create a barcode object based on the specified format."""
     if barcode_format == 'qr':
@@ -67,15 +88,10 @@ def generate_location_sheet_pdf(locations, barcode_format='qr'):
             c.setFont("Helvetica-Bold", 20)
             c.drawString(50, height - 50, "Kitchen — Location Codes (cont.)")
 
-        obj = _create_barcode(payload, barcode_format)
         if barcode_format == 'qr':
-            d = Drawing(90, 90)
-            obj.barWidth = 90
-            obj.barHeight = 90
-            d.add(obj)
-            renderPDF.draw(d, c, x, y - 95)
+            renderPDF.draw(_qr_drawing(payload, 90), c, x, y - 95)
         else:
-            obj.drawOn(c, x, y - 60)
+            _create_barcode(payload, barcode_format).drawOn(c, x, y - 60)
 
         c.setFont("Helvetica-Bold", 13)
         c.drawString(x + 100, y - 30, name)
@@ -123,10 +139,8 @@ def generate_quantity_barcodes_pdf(barcode_format='code128'):
         barcode_obj = _create_barcode("BBUDDY-ADD", barcode_format)
 
         if barcode_format == 'qr':
-            # Draw QR code using Drawing
-            d = Drawing(70, 70)
-            d.add(barcode_obj)
-            d.drawOn(c, left_margin, mode_y - barcode_height - 5)
+            renderPDF.draw(_qr_drawing("BBUDDY-ADD", barcode_height),
+                           c, left_margin, mode_y - barcode_height - 5)
         else:
             barcode_obj.drawOn(c, left_margin, mode_y - barcode_height - 5)
 
@@ -142,10 +156,8 @@ def generate_quantity_barcodes_pdf(barcode_format='code128'):
         barcode_obj = _create_barcode("BBUDDY-CONSUME", barcode_format)
 
         if barcode_format == 'qr':
-            # Draw QR code using Drawing
-            d = Drawing(70, 70)
-            d.add(barcode_obj)
-            d.drawOn(c, right_column_x, mode_y - barcode_height - 5)
+            renderPDF.draw(_qr_drawing("BBUDDY-CONSUME", barcode_height),
+                           c, right_column_x, mode_y - barcode_height - 5)
         else:
             barcode_obj.drawOn(c, right_column_x, mode_y - barcode_height - 5)
 
@@ -185,9 +197,8 @@ def generate_quantity_barcodes_pdf(barcode_format='code128'):
 
             # Draw barcode
             if barcode_format == 'qr':
-                d = Drawing(70, 70)
-                d.add(barcode_obj)
-                d.drawOn(c, x_pos, y_pos - barcode_height - 5)
+                renderPDF.draw(_qr_drawing(barcode_text, barcode_height),
+                               c, x_pos, y_pos - barcode_height - 5)
             else:
                 barcode_obj.drawOn(c, x_pos, y_pos - barcode_height - 5)
 

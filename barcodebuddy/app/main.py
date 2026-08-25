@@ -672,7 +672,9 @@ def download_location_sheet():
             return jsonify({"error": "no locations available from Grocy"}), 503
         fmt = request.args.get('format', 'qr')
         buf = generate_location_sheet_pdf(rows, barcode_format=fmt)
-        return send_file(buf, mimetype='application/pdf', as_attachment=True,
+        # Opened in a tab like the control sheet, not force-downloaded: the
+        # point is to look at it, then print it.
+        return send_file(buf, mimetype='application/pdf', as_attachment=False,
                          download_name='kitchen-location-codes.pdf')
     except Exception as err:                                     # noqa: BLE001
         logger.error(f"location sheet failed: {err}")

@@ -235,6 +235,14 @@
                     📄 {{ _('download_quantity_barcodes') }}
                 </button>
             </div>
+            <div style="margin-bottom: 15px;">
+                <!-- Generated from Grocy's real locations, so it always matches
+                     the house. Scan one at a shelf; what that gun scans next is
+                     created there, until 10 idle minutes pass. -->
+                <button onclick="downloadLocationSheet()" style="width: 100%; background: #0ea5e9;">
+                    📍 Location codes (QR)
+                </button>
+            </div>
             <div class="info-box">
                 <strong>{{ _('active_scanner_devices') }}:</strong>
                 {% if scanner_devices %}
@@ -294,6 +302,10 @@
 
         function downloadQuantityBarcodes() {
             window.open('api/download-quantity-barcodes', '_blank');
+        }
+
+        function downloadLocationSheet() {
+            window.open('api/download-location-sheet', '_blank');
         }
 
         function loadPending() {

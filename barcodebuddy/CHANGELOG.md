@@ -1,5 +1,23 @@
 # Changelog
 
+## Fix: QR codes on the printed sheets were clipped, not scaled
+
+Every QR on the control sheet was drawn by adding a `QrCodeWidget` to a
+`Drawing(70, 70)`. That does not scale the widget -- it **clips** it. The
+payloads here have natural bounds of **90.7pt**, so roughly a fifth of each code
+was cut off. A clipped QR is not a small QR, it is an unscannable one, and it
+looks perfectly fine on screen right up until someone points a scanner at a
+printed page.
+
+`_qr_drawing(text, size)` now fits any QR to any square via a transform computed
+from its actual bounds, so it stays correct if a longer payload ever changes the
+module count. All four call sites use it -- ADD, CONSUME, the quantity codes and
+the location sheet.
+
+Also: the web UI had no link to the location sheet at all, and the route forced a
+download instead of opening in a tab like the control sheet does. Both fixed.
+
+
 ## Location-flip barcodes: tell a gun which shelf it is at
 
 Scan `BBUDDY-LOC-BIG-PANTRY` at a shelf and everything that gun scans next is
