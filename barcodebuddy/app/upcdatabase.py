@@ -24,6 +24,25 @@ class UPCDatabaseClient:
 
     BASE_URL = "https://api.upcdatabase.org/product"
 
+    @staticmethod
+    def _same_gtin(returned: str, queried: str) -> bool:
+        """
+        Is the code we got back the SAME GTIN we asked about?
+
+        Not a string comparison. upcdatabase.org zero-pads UPC-A to EAN-13 --
+        ask for 049000006346 and it answers 0049000006346 -- so an exact check
+        would reject its own correct answers and silently kill the provider.
+        GTIN-8/12/13/14 are one number at four widths, so compare padded to 14.
+
+        This still catches the thing the check is FOR: a provider handing back
+        a different product's code. The zero-padding trap that produced
+        "Bonbebe Fruithapje" is stopped earlier, by is_gtin() -- 55540 is five
+        digits and never reaches any provider.
+        """
+        a = "".join(c for c in str(returned or "") if c.isdigit())
+        b = "".join(c for c in str(queried or "") if c.isdigit())
+        return bool(a) and bool(b) and a.zfill(14) == b.zfill(14)
+
     def __init__(self, api_key: str = ""):
         self.api_key = (api_key or "").strip()
 
@@ -54,15 +73,37 @@ class UPCDatabaseClient:
             data = response.json()
 
             if data.get('success'):
-                # Extract relevant information
+                returned = data.get('barcode', '')
+                if returned and not self._same_gtin(returned, barcode):
+                    logger.warning(f"⚠️  UPC Database answered for {returned} when asked "
+                                   f"about {barcode} - different product, discarding")
+                    return None
+
+                # "success" is NOT the same as a usable answer. This API returns
+                # success:true with title:"" for barcodes it merely knows about --
+                # 049000006346 (Coca-Cola) is one. A .get(key, default) does not
+                # catch that, because the default only fires when the key is
+                # ABSENT, not when it is empty. Left alone, the empty string
+                # becomes the product name in Grocy.
+                #
+                # A blank name is worse than no answer: "Unknown 049000006346"
+                # looks unfinished and gets fixed in review, while a nameless
+                # product is invisible. So: no name, no hit.
+                name = (str(data.get('title') or '').strip()
+                        or str(data.get('description') or '').strip())
+                if not name:
+                    logger.info(f"❌ UPC Database knows {barcode} but has no name for "
+                                "it (empty title) - treating as a miss")
+                    return None
+
                 product_info = {
-                    'name': data.get('title', 'Unknown Product'),
+                    'name': name,
                     'barcode': barcode,
-                    'brand': data.get('brand', ''),
+                    'brand': str(data.get('brand') or '').strip(),
                     'quantity': '',
                     'image_url': '',
-                    'categories': data.get('category', ''),
-                    'description': data.get('description', '')
+                    'categories': str(data.get('category') or '').strip(),
+                    'description': str(data.get('description') or '').strip()
                 }
 
                 logger.info(f"✅ Found in UPC Database: {product_info['name']}")

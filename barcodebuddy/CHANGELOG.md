@@ -1,5 +1,30 @@
 # Changelog
 
+## upcdatabase.org: "success" is not a hit, and the echo check must normalise GTINs
+
+Two bugs found live on 2026-08-25, the moment a real API key made this provider
+reachable for the first time.
+
+**An empty title became a product name.** `data.get('title', 'Unknown Product')`
+looks defensive but is not: the default only fires when the key is *absent*.
+upcdatabase.org answers `success: true` with `title: ""` for barcodes it merely
+knows about -- `049000006346` (Coca-Cola) is one -- so the name passed to Grocy
+was the empty string. A blank product name is worse than no answer at all:
+`Unknown 049000006346` looks unfinished and gets fixed in review, while a
+nameless product is invisible. A hit must now carry a non-empty name (title,
+falling back to description) or it is treated as a miss.
+
+**The returned code is zero-padded, so an exact echo check would be wrong.**
+Ask about `049000006346` and this API answers `0049000006346`; ask about
+`016291441187` and it answers `0016291441187`. A character-for-character
+comparison -- which is what the kitchen-stack roadmap specified -- would reject
+both, including the perfectly good *Coriander Seed / Morton & Bassett* result,
+and silently disable the provider. `_same_gtin()` compares zero-padded to 14
+digits instead, which still catches a provider substituting a different
+product. The padding trap that produced "Bonbebe Fruithapje" is stopped earlier
+by `is_gtin()`: `55540` is five digits and never reaches a provider.
+
+
 All notable changes to Barcode Buddy (Python) will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
