@@ -40,6 +40,7 @@ AUTH_ERROR = "auth_error"       # key missing, invalid or rejected
 ERROR = "error"                 # transport or parse failure
 SKIPPED_NON_GTIN = "skipped_non_gtin"
 SKIPPED_NO_KEY = "skipped_no_key"
+INVALID_UPC = "invalid_upc"     # provider refused the code itself, not a miss
 
 
 class _Attempt:
@@ -161,8 +162,12 @@ class LookupLog:
             lat = sorted(p["latencies"])
             # Attempts the provider was actually asked to answer -- skips are not
             # the provider's fault and would flatter or punish it unfairly.
+            # invalid_upc joins the skips: the provider declined to try, so
+            # counting it as a fair chance to answer would understate its hit
+            # rate for a reason that is our input's fault, not the provider's.
             asked = p["attempts"] - sum(p["outcomes"].get(k, 0)
-                                        for k in (SKIPPED_NON_GTIN, SKIPPED_NO_KEY))
+                                        for k in (SKIPPED_NON_GTIN, SKIPPED_NO_KEY,
+                                                  INVALID_UPC))
             report[name] = {
                 "attempts": p["attempts"],
                 "asked": asked,

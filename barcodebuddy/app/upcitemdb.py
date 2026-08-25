@@ -49,6 +49,15 @@ class UPCItemDbClient:
                 self.last_outcome = "throttled"
                 logger.warning(f"⏳ UPCitemdb rate limited on {barcode}")
                 return None
+            if resp.status_code == 400:
+                # "Not a valid UPC code" -- the check digit failed. That is our
+                # input being wrong, not the provider being broken, and
+                # recording it as an error would pollute the error rate that the
+                # provider-health check watches.
+                self.last_outcome = "invalid_upc"
+                logger.info(f"⏭  UPCitemdb rejected {barcode} as an invalid UPC "
+                            "(check digit) - not a provider failure")
+                return None
             if resp.status_code in (401, 403):
                 self.last_outcome = "auth_error"
                 logger.error(f"🔑 UPCitemdb rejected the key (HTTP {resp.status_code})")

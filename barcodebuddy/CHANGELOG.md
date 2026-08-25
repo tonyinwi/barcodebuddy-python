@@ -1,5 +1,28 @@
 # Changelog
 
+## An invalid UPC is not a provider failure
+
+UPCitemdb answers a bad check digit with HTTP 400 `INVALID_UPC`. `raise_for_status()`
+turned that into an exception and the attempt was recorded as `error` -- so our
+own bad input inflated the error rate that the provider-health check watches,
+while upcdatabase called the same code a plain miss. Two providers looking
+different for a reason that has nothing to do with either.
+
+It is now recorded as `invalid_upc`, and joins the skips excluded from the
+`asked` denominator: the provider declined to try, so counting it as a fair
+chance to answer understates its hit rate.
+
+**A check-digit gate was written and then deliberately abandoned.** Validating
+before calling any provider looked obviously right -- bad codes never reach a
+provider, comparison stays symmetric. Tested against every real barcode in the
+catalogue first: 19 of 20 pass, and the one that fails, `04308504`, **resolves
+correctly** -- USDA returns "SWEET TEA LIQUID WATER ENHANCER" for it and echoes
+the code back exactly. Real barcodes with bad check digits exist in the wild and
+in provider databases, so the gate would have broken intake for a product that
+works today. `check_digit_ok()` survives as a diagnostic for flagging a probable
+mis-scan, and is wired to nothing.
+
+
 ## Provider order is configuration, and UPCitemdb is no longer first
 
 `lookup_order` in the add-on options is now the chain. Providers are tried top
