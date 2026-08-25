@@ -55,10 +55,6 @@ class Config:
         """Get quantity barcode prefix."""
         return self._config.get('barcode_quantity_prefix', 'BBUDDY-Q-')
 
-    @property
-    def enable_openfoodfacts(self) -> bool:
-        """Check if OpenFoodFacts database is enabled."""
-        return self._config.get('enable_openfoodfacts', True)
 
     @property
     def ha_webhook_url(self) -> str:
@@ -100,49 +96,72 @@ class Config:
         """USB "vendor:product" of the gun that always means CONSUME."""
         return str(self._config.get('scanner_consume_device', '') or '').strip().lower()
 
+    # Priority is the ONLY chain mechanism. It replaced a lookup_order list plus
+    # a set of enable_* booleans, which were two ways to say the same thing:
+    # a provider could be enabled but absent from the order, or present in the
+    # order but disabled, and both looked exactly like "never matches anything".
+    # One number per provider: 1 is tried first, 0 is off.
+    #
+    # A list is unambiguous but the add-on options UI is a generated form with
+    # no drag-to-reorder, so changing a list means deleting and re-adding
+    # entries. A number is one field to edit.
+    PRIORITY_KEYS = {
+        'upcdatabase': 'upcdatabase_priority',
+        'upcitemdb': 'upcitemdb_priority',
+        'openfoodfacts': 'openfoodfacts_priority',
+        'upcitemdb-via-grocy': 'grocy_lookup_priority',
+    }
+
+    # Ties are possible in a way a list made impossible, so they need a stated
+    # rule rather than dict-iteration luck. This is the tiebreak, and the
+    # provider check warns when two providers collide.
+    TIEBREAK = ['upcdatabase', 'upcitemdb', 'openfoodfacts', 'upcitemdb-via-grocy']
+
+    def priority(self, provider: str) -> int:
+        """0 means off. Lower runs earlier."""
+        key = self.PRIORITY_KEYS.get(provider)
+        if not key:
+            return 0
+        try:
+            return max(0, int(self._config.get(key, 0)))
+        except (TypeError, ValueError):
+            return 0
+
     @property
     def lookup_order(self) -> list:
         """
-        The chain, in order. This IS the sequence providers are tried in.
+        The chain, derived from the per-provider priorities.
 
-        A provider not listed here is never called, whatever its enable_* flag
-        says. The flags remain as a veto -- an off switch that does not require
-        editing the order -- and a provider that is listed but switched off is
-        reported by the provider check rather than silently skipped, because
-        "configured but inert" is the failure mode that already cost weeks here.
-
-        Default puts upcdatabase first on measured evidence, not taste:
+        Defaults put upcdatabase first on measured evidence, not taste:
         UPCitemdb's trial endpoint throttled 6 of 10 attempts, and every throttle
         falls through to upcdatabase anyway -- so leading with it buys a wasted
         call before the slow one. upcdatabase also had the better hit rate
         (50% vs 37%). UPCitemdb is ~7x faster and worth promoting the moment a
         paid key removes the throttling.
         """
-        order = self._config.get('lookup_order') or []
-        order = [str(x).strip() for x in order if str(x).strip()]
-        return order or ['upcdatabase', 'upcitemdb']
+        active = [(self.priority(name), self.TIEBREAK.index(name), name)
+                  for name in self.PRIORITY_KEYS
+                  if self.priority(name) > 0]
+        return [name for _, _, name in sorted(active)]
 
-    @property
-    def enable_upcitemdb(self) -> bool:
-        """UPCitemdb, called directly rather than through Grocy's plugin."""
-        return self._config.get('enable_upcitemdb', True)
+    def priority_ties(self) -> list:
+        """Providers sharing a priority, so the check can say so out loud."""
+        seen, ties = {}, []
+        for name in self.PRIORITY_KEYS:
+            pr = self.priority(name)
+            if pr <= 0:
+                continue
+            if pr in seen:
+                ties.append((pr, seen[pr], name))
+            seen[pr] = name
+        return ties
+
 
     @property
     def upcitemdb_api_key(self) -> str:
         """Empty uses the free trial endpoint (~100/day, no signup)."""
         return str(self._config.get('upcitemdb_api_key', '') or '').strip()
 
-    @property
-    def enable_grocy_lookup(self) -> bool:
-        """
-        The OLD path: UPCitemdb via Grocy's external-lookup plugin.
-
-        Off by default now that UPCitemdb is called directly. Kept as a rollback
-        switch rather than deleted, because the plugin is still what resolves
-        the product presets for anything else that calls Grocy's external-lookup
-        (Basil, Grocy's own UI).
-        """
-        return self._config.get('enable_grocy_lookup', False)
 
     @property
     def usda_api_key(self) -> str:
@@ -170,10 +189,6 @@ class Config:
         return str(self._config.get('lookup_log_path', '')
                    or '/share/kitchen-stack/lookup_log.jsonl')
 
-    @property
-    def enable_upcdatabase(self) -> bool:
-        """Check if UPC Database is enabled."""
-        return self._config.get('enable_upcdatabase', True)
 
     @property
     def language(self) -> str:

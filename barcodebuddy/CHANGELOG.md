@@ -1,5 +1,36 @@
 # Changelog
 
+## One number per provider, replacing the list and the enable_ flags
+
+`lookup_order` plus `enable_*` booleans were two ways to say the same thing, and
+they could disagree: a provider could be switched on but absent from the order,
+or listed in the order but switched off. Both looked exactly like "a provider
+that never matches anything", which is the ambiguity that let a dead provider go
+unnoticed for weeks in the first place.
+
+Now one field per provider. **1 runs first, 0 is off.**
+
+```
+upcdatabase_priority: 1
+upcitemdb_priority: 2
+openfoodfacts_priority: 0
+grocy_lookup_priority: 0
+```
+
+A list is unambiguous, which is why it was the first attempt. But the add-on
+options screen is a generated form with no drag-to-reorder, so changing a list
+means deleting and re-adding entries, while a number is one field to edit.
+
+The trade is that a list made ties impossible and numbers do not, so the
+tiebreak is stated rather than left to dictionary iteration order, and the
+provider check warns when two providers share a priority instead of resolving it
+silently.
+
+The four `enable_*` properties are deleted rather than left in place, because
+dead configuration that still reads as live is how this codebase got a provider
+enabled with no key.
+
+
 ## An invalid UPC is not a provider failure
 
 UPCitemdb answers a bad check digit with HTTP 400 `INVALID_UPC`. `raise_for_status()`

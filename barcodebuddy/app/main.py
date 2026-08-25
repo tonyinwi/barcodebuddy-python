@@ -136,6 +136,7 @@ def validate_providers(days=7):
                                 "OLD path via the PHP plugin -- rollback switch"),
     }
     order = config.lookup_order
+    ties = config.priority_ties()
 
     # In configured order first, so the log reads like the chain runs.
     for pos, name in enumerate(order, 1):
@@ -144,6 +145,7 @@ def validate_providers(days=7):
         rows.append({
             "provider": name,
             "position": pos,
+            "priority": config.priority(name),
             "in_chain": True,
             "enabled": bool(spec and spec["enabled"]()),
             "needs_key": needs_key,
@@ -160,6 +162,7 @@ def validate_providers(days=7):
         rows.append({
             "provider": name,
             "position": None,
+            "priority": config.priority(name),
             "in_chain": False,
             "enabled": bool(spec["enabled"]()),
             "needs_key": needs_key,
@@ -178,10 +181,13 @@ def validate_providers(days=7):
 
     for r in rows:
         warns = []
-        if r.get("in_chain") and not r["enabled"]:
-            warns.append("listed in lookup_order but SWITCHED OFF -- never called")
-        if not r.get("in_chain") and r["enabled"]:
-            warns.append("enabled but NOT in lookup_order -- never called")
+        # A tie is possible now in a way an ordered list made impossible, so say
+        # so rather than resolving it silently by declaration order.
+        for pr, first, second in ties:
+            if r["provider"] in (first, second):
+                warns.append(f"priority {pr} is shared with "
+                             f"{second if r['provider'] == first else first} -- "
+                             "order falls back to a fixed tiebreak")
         if r["enabled"] and r["needs_key"] and not r["key_set"]:
             warns.append("ENABLED BUT NO KEY -- every lookup is skipped silently")
         rec = r["recent"]
@@ -210,7 +216,7 @@ def log_provider_check():
     logger.info("🔎 Provider check (no lookups spent):")
     for r in rows:
         state = "ENABLED " if r["enabled"] else "disabled"
-        pos = f"{r['position']}." if r.get("position") else " -"
+        pos = f"{r['priority']}." if r.get("position") else " -"
         rec = r["recent"]
         ev = (f"last 7d: {rec['asked']} asked, {rec['hits']} hit "
               f"({rec['hit_rate_pct']}%), median {rec['median_ms']}ms") if rec else "no recent attempts"
@@ -224,25 +230,25 @@ def log_provider_check():
 PROVIDERS = {
     "upcitemdb": {
         "label": "UPCitemdb",
-        "enabled": lambda: bool(config.enable_upcitemdb),
+        "enabled": lambda: config.priority("upcitemdb") > 0,
         "lookup": lambda bc: upcitemdb_client.lookup_barcode(bc),
         "outcome": lambda: upcitemdb_client.last_outcome,
     },
     "upcdatabase": {
         "label": "UPC Database",
-        "enabled": lambda: bool(config.enable_upcdatabase),
+        "enabled": lambda: config.priority("upcdatabase") > 0,
         "lookup": lambda bc: upcdatabase_client.lookup_barcode(bc),
         "outcome": lambda: upcdatabase_client.last_outcome,
     },
     "openfoodfacts": {
         "label": "OpenFoodFacts",
-        "enabled": lambda: bool(config.enable_openfoodfacts),
+        "enabled": lambda: config.priority("openfoodfacts") > 0,
         "lookup": lambda bc: openfoodfacts_client.lookup_barcode(bc),
         "outcome": lambda: None,
     },
     "upcitemdb-via-grocy": {
         "label": "Grocy lookup plugin",
-        "enabled": lambda: bool(config.enable_grocy_lookup and grocy_client),
+        "enabled": lambda: config.priority("upcitemdb-via-grocy") > 0 and bool(grocy_client),
         "lookup": lambda bc: grocy_client.external_lookup(bc),
         "outcome": lambda: None,
     },
