@@ -236,7 +236,16 @@ def penzeys_hierarchy(sku: str, presets: dict):
             return None, "could not create the parent"
         logger.info(f"🌳 created parent {parent_name!r} (product {parent_id})")
 
-    child_name = f"{parent_name} {container}"
+    # ONE CHILD PER SIZE, not per container type. A 3/4 cup bag and a 3 cup bag
+    # are different products: different price, and Grocy's price history is per
+    # product, so collapsing them averages $6 and $18 into a number that means
+    # nothing. Stock is worse -- "1 bag" is 4x ambiguous, so "do I have enough"
+    # becomes unanswerable. Splitting is the whole reason to have parent/child.
+    #
+    # Penzeys' own size string reads correctly when appended:
+    # "brown mustard seed 3/4 cup bag" is exactly what you would ask for.
+    size = (info.get("size") or "").strip()
+    child_name = f"{parent_name} {size}" if size else f"{parent_name} {container}"
     child_id = grocy_client.find_product_by_name(child_name)
     if child_id is None:
         child_id = grocy_client.create_product(
