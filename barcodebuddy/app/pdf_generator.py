@@ -61,8 +61,13 @@ QUIET_MODULES = 4
 
 # Below this a handheld imager starts struggling, especially with the print
 # bleed of an inkjet on matte label stock. Not a hard standard -- good imagers
-# manage ~0.25mm -- but it is the point at which a sheet is worth reconsidering
-# rather than reprinting twice.
+# manage ~0.25mm.
+#
+# CALIBRATED 2026-08-26: an 8167 sheet printed and scanned CLEANLY at 0.34mm
+# with the gun in use here (USB 0581:011a). So 0.30 is a real warning line
+# rather than a guess, and 8167 is a proven sheet rather than a risky one --
+# but the margin above the line is thin, and it is thin on ONE reader. A
+# different gun is a different experiment.
 MIN_MODULE_MM = 0.30
 
 
@@ -181,10 +186,11 @@ def generate_label_sheet_pdf(locations, sheet_key="8167"):
     backing paper is a quiet zone that disappears exactly when it is needed.
 
     The cost is real: on 8167 the module lands around 0.34mm for the longer
-    shelf names. That is above what a decent imager needs and below what is
-    comfortable, so the generator prints the measured figure on the sheet and
-    warns when it drops under MIN_MODULE_MM -- a number on the page beats
-    finding out at the shelf.
+    shelf names. **Verified in the house on 2026-08-26 -- printed, stuck up,
+    and scanned cleanly.** So 8167 works, and the figure the generator prints
+    in the bottom margin is now calibrated against a real reader rather than
+    against a specification. It still warns under MIN_MODULE_MM, because the
+    margin is thin and it is thin on one gun.
     """
     import locations as loc
 
