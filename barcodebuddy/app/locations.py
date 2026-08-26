@@ -61,7 +61,7 @@ class LocationTracker:
     def __init__(self, idle_seconds: int = IDLE_SECONDS):
         self.idle_seconds = idle_seconds
         self._lock = threading.Lock()
-        self._by_device = {}        # device -> {"id","name","at"}
+        self._by_device = {}        # device -> {"id","name","at","counts"}
 
     # Resolves a device node to its USB id. Injected so this module stays
     # testable without the scanner package.
@@ -94,10 +94,49 @@ class LocationTracker:
                 usb = None
         return f"usb:{usb}" if usb else f"dev:{device}"
 
+    # What a product scan can amount to, from the point of view of somebody
+    # standing at a shelf. Deliberately narrower than scan_result['status']:
+    # the shelf-side question is not "did the HTTP call work" but "how much
+    # cleanup did that just buy me".
+    OUTCOMES = ("created", "stocked", "unresolved", "error")
+
     def set(self, device, location_id, location_name):
+        """
+        Point a gun at a shelf, and START THE COUNT AT ZERO.
+
+        The count exists to answer the only question worth asking mid-shelf --
+        is this cupboard done? -- so it has to be per location, not per
+        session. Carrying a running total across a new location code would
+        make the number meaningless exactly when it is being read.
+        """
         with self._lock:
             self._by_device[self._key(device)] = {
-                "id": location_id, "name": location_name, "at": time.monotonic()}
+                "id": location_id, "name": location_name, "at": time.monotonic(),
+                "counts": {k: 0 for k in self.OUTCOMES}}
+
+    def bump(self, device, outcome):
+        """
+        Record a product scan against the gun's current shelf.
+
+        Also counts as activity, so it resets the idle clock -- scanning is
+        exactly what "not idle" means, and a separate touch() call that
+        somebody could forget is how the clock ends up expiring mid-shelf.
+
+        Silently does nothing when the gun has no location set: not every scan
+        happens during an inventory, and a scan with no shelf is the normal
+        case rather than an error.
+        """
+        if outcome not in self.OUTCOMES:
+            return
+        with self._lock:
+            entry = self._by_device.get(self._key(device))
+            if not entry:
+                return
+            if time.monotonic() - entry["at"] > self.idle_seconds:
+                return
+            entry["at"] = time.monotonic()
+            entry.setdefault("counts", {k: 0 for k in self.OUTCOMES})
+            entry["counts"][outcome] = entry["counts"].get(outcome, 0) + 1
 
     def clear(self, device):
         """
@@ -133,13 +172,28 @@ class LocationTracker:
             return entry
 
     def snapshot(self):
-        """For the UI. Reports remaining seconds so a gun can show its clock."""
+        """
+        For the UI. Reports remaining seconds so a gun can show its clock, and
+        the per-outcome counts since this shelf was set.
+
+        The clock is the safety net for the 10-minute expiry: without it on
+        screen the expiry is a silent trap rather than a guard, and you find
+        out by discovering forty things in Big Pantry.
+        """
         now = time.monotonic()
         with self._lock:
-            return {k: {"id": v["id"], "name": v["name"],
-                        "expires_in": max(0, int(self.idle_seconds - (now - v["at"])))}
-                    for k, v in self._by_device.items()
-                    if now - v["at"] <= self.idle_seconds}
+            out = {}
+            for k, v in self._by_device.items():
+                if now - v["at"] > self.idle_seconds:
+                    continue
+                counts = v.get("counts") or {c: 0 for c in self.OUTCOMES}
+                out[k] = {
+                    "id": v["id"], "name": v["name"],
+                    "expires_in": max(0, int(self.idle_seconds - (now - v["at"]))),
+                    "counts": dict(counts),
+                    "scanned": sum(counts.values()),
+                }
+            return out
 
 
 def resolve(barcode, locations):

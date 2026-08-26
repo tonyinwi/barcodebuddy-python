@@ -1,11 +1,14 @@
 """Main Flask application."""
-from flask import Flask, render_template, jsonify, request, session, send_file
+from flask import (Flask, render_template, jsonify, request, session,
+                   send_file, make_response)
 from flask_babel import Babel, gettext
 import logging
 import sys
 import os
 import requests
 import threading
+import base64
+from urllib.parse import quote
 from config import Config
 from grocy import GrocyClient
 from scanner import ScannerHandler, device_usb_id
@@ -348,11 +351,48 @@ def notify_webhook(payload: dict):
     threading.Thread(target=_post, daemon=True).start()
 
 
+def _picture_url(product: dict) -> str:
+    """
+    A URL the browser can render for a product Grocy already has a picture of.
+
+    Not Grocy's own URL: that endpoint wants the API key in a header, and an
+    <img> tag cannot send one. Putting the key in a query string instead would
+    paste a credential into every browser history and log on the network. So
+    this add-on proxies it -- the key stays server-side and the browser asks
+    for a path.
+    """
+    name = str((product or {}).get('picture_file_name') or '').strip()
+    pid = (product or {}).get('id')
+    return f"api/picture/{pid}" if name and pid else ""
+
+
+def _scan_outcome(scan_result: dict) -> str:
+    """
+    Narrow a scan to the shelf-side question, or '' if it is not a product scan.
+
+    Mode switches, quantity codes and location codes are not inventory, so they
+    must not move the count -- otherwise "23 items in Spice Cabinet" quietly
+    includes the four times you flipped the gun to CONSUME.
+    """
+    status = scan_result.get('status')
+    if status == 'error':
+        return 'error'
+    if status != 'success':
+        return ''
+    return scan_result.get('outcome') or 'stocked'
+
+
 def finish_scan(scan_result: dict):
     """Record a scan in recent history and tell Home Assistant about it."""
     recent_scans.insert(0, scan_result)
     if len(recent_scans) > 50:
         recent_scans.pop()
+    # One choke point for the per-shelf tally rather than a call in each of the
+    # twenty branches that can conclude a scan -- which is how a new branch
+    # ends up silently uncounted.
+    outcome = _scan_outcome(scan_result)
+    if outcome:
+        location_tracker.bump(scan_result.get('device'), outcome)
     notify_webhook(scan_result)
 
 
@@ -407,7 +447,17 @@ def handle_barcode(barcode: str, device: str = None):
         # Structured fields so consumers need not parse the emoji text.
         'mode': mode,
         'product': None,
-        'device': device
+        'device': device,
+        # What this scan amounted to, from the point of view of somebody at a
+        # shelf: created / stocked / unresolved / error. Set structurally at
+        # each branch rather than inferred from the message, because the
+        # message is emoji prose and reading it back is how a rename breaks a
+        # counter silently.
+        'outcome': '',
+        # A URL the browser can put in an <img>. Either this add-on's picture
+        # proxy for something Grocy already has, or the provider's own image
+        # URL for something just looked up. Never blocks the scan (#150).
+        'image': '',
     }
 
     # Check if this is a mode switch barcode
@@ -500,6 +550,8 @@ def handle_barcode(barcode: str, device: str = None):
                 product_id = product['product'].get('id')
                 product_name = product['product'].get('name', 'Unknown')
                 scan_result['product'] = product_name
+                scan_result['outcome'] = 'stocked'
+                scan_result['image'] = _picture_url(product['product'])
                 # Product info is already included in the response
                 product_info = product['product']
             else:
@@ -522,6 +574,8 @@ def handle_barcode(barcode: str, device: str = None):
             if product_info:
                 product_name = product_info.get('name', 'Unknown')
                 scan_result['product'] = product_name
+                scan_result['outcome'] = 'stocked'
+                scan_result['image'] = _picture_url(product_info)
                 # Use current quantity, or default to 1 if no quantity barcode was scanned
                 amount = current_quantity if current_quantity > 0 else 1.0
 
@@ -559,6 +613,7 @@ def handle_barcode(barcode: str, device: str = None):
                     product_id = alias['grocy_product_id']
                     product_name = alias['grocy_product_name']
                     scan_result['product'] = product_name
+                    scan_result['outcome'] = 'stocked'
                     alias_found = True
 
                     logger.info(f"🔗 Found product via alias: {product_name} (ID {product_id})")
@@ -614,6 +669,13 @@ def handle_barcode(barcode: str, device: str = None):
                     # tools/grocy_review.py in the kitchen-stack repo.
                     product_name = external_product['name']
                     scan_result['product'] = product_name
+                    scan_result['outcome'] = 'created'
+                    # Straight from the provider. Nothing is downloaded here --
+                    # the browser fetches it, so a dead CDN costs the scan
+                    # nothing at all. Grocy gets its own copy later, out of
+                    # band, where a hotlink block can be checked properly (#76).
+                    scan_result['image'] = str(
+                        external_product.get('image_url') or '').strip()
                     amount = current_quantity if current_quantity > 0 else 1.0
 
                     # Grocy enforces UNIQUE on products.name, so a title we have already
@@ -747,6 +809,10 @@ def handle_barcode(barcode: str, device: str = None):
                     # can, and it carries the barcode for whoever reviews it later.
                     product_name = f"Unknown {barcode}"
                     scan_result['product'] = product_name
+                    # Counted apart from 'created' on purpose: a running tally
+                    # of these is the only number that says how much review
+                    # this shelf just bought you.
+                    scan_result['outcome'] = 'unresolved' 
                     amount = current_quantity if current_quantity > 0 else 1.0
 
                     product_id = grocy_client.find_product_by_name(product_name)
@@ -890,6 +956,44 @@ def locations_state():
         "codes": [{"id": r.get("id"), "name": r.get("name"),
                    "barcode": loc.barcode_for(r.get("name"))} for r in rows],
     })
+
+
+@app.route('/api/picture/<int:product_id>')
+def product_picture(product_id):
+    """
+    Stream a product's picture out of Grocy.
+
+    Exists so an <img> tag can show it: Grocy wants the API key in a header,
+    which a browser cannot attach, and putting it in the query string would
+    write a credential into every history and access log on the way.
+
+    Cached for an hour. A product picture does not change, and the scan feed
+    re-renders every two seconds -- without this, standing at a shelf means
+    re-fetching the same photograph 1800 times an hour.
+    """
+    if not grocy_client:
+        return jsonify({"error": "no grocy client"}), 503
+    info = grocy_client.get_product_info(product_id) or {}
+    product = info.get('product') if isinstance(info.get('product'), dict) else info
+    name = str((product or {}).get('picture_file_name') or '').strip()
+    if not name:
+        return jsonify({"error": "no picture"}), 404
+
+    seg = quote(base64.b64encode(name.encode()).decode(), safe='')
+    try:
+        r = requests.get(f"{grocy_client.url}/api/files/productpictures/{seg}",
+                         headers={'GROCY-API-KEY': grocy_client.api_key},
+                         timeout=10)
+    except Exception as err:                                     # noqa: BLE001
+        logger.debug(f"picture fetch failed (ignored): {err}")
+        return jsonify({"error": "fetch failed"}), 502
+    if r.status_code != 200:
+        return jsonify({"error": f"grocy said {r.status_code}"}), r.status_code
+
+    resp = make_response(r.content)
+    resp.headers['Content-Type'] = r.headers.get('Content-Type', 'image/jpeg')
+    resp.headers['Cache-Control'] = 'private, max-age=3600'
+    return resp
 
 
 @app.route('/api/scans')
