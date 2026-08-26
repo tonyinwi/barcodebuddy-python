@@ -93,8 +93,13 @@ def test_the_quiet_zone_is_counted_into_the_module_size():
 
 def test_8167_is_tight_and_5160_is_comfortable():
     """
-    The number that decides whether a sheet is worth printing. Asserted so a
-    change to the payload or the padding cannot quietly cross the line.
+    The number that decides whether a sheet is worth printing.
+
+    8167 was PRINTED AND SCANNED CLEANLY on 2026-08-26 at 0.34mm, so this is
+    a calibration point and not a guess. That is what makes the assertion
+    worth having: anything that shrinks the module -- a longer location name,
+    more padding, a bigger quiet zone -- walks toward a line we now know the
+    real position of.
     """
     worst = loc.barcode_for("Basement Pantry")
     tight = pg.module_mm(pg.LABEL_SHEETS["8167"], worst)
