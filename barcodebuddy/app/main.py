@@ -14,7 +14,9 @@ from grocy import GrocyClient
 from scanner import ScannerHandler, device_usb_id
 import locations as loc
 from alias_client import AliasClient
-from pdf_generator import generate_quantity_barcodes_pdf, generate_location_sheet_pdf
+from pdf_generator import (generate_quantity_barcodes_pdf,
+                           generate_location_sheet_pdf,
+                           generate_label_sheet_pdf)
 from datetime import datetime
 
 # Setup logging
@@ -924,17 +926,37 @@ def index():
 
 @app.route('/api/download-location-sheet')
 def download_location_sheet():
-    """A printable QR sheet, generated from Grocy's ACTUAL locations."""
+    """
+    A printable sheet of STOCK LOCATION codes, from Grocy's actual locations.
+
+    `?sheet=8167` or `?sheet=5160` lays them out on that Avery die-cut sheet;
+    without it you get the original full-page cards.
+
+    ALWAYS FORCES A FRESH FETCH. `get_locations()` is cached for the scan
+    path, where somebody is standing waiting for a QR to resolve. Nobody is
+    waiting here, and a sheet printed from a stale list is a label for a shelf
+    the scanner will reject -- which clears the gun and sends everything after
+    it to the preset.
+    """
     try:
-        rows = grocy_client.get_locations() if grocy_client else []
+        rows = grocy_client.get_locations(force=True) if grocy_client else []
         if not rows:
             return jsonify({"error": "no locations available from Grocy"}), 503
-        fmt = request.args.get('format', 'qr')
-        buf = generate_location_sheet_pdf(rows, barcode_format=fmt)
+
+        sheet = (request.args.get('sheet') or '').strip()
+        if sheet:
+            buf = generate_label_sheet_pdf(rows, sheet_key=sheet)
+            name = f'stock-location-labels-{sheet}.pdf'
+        else:
+            buf = generate_location_sheet_pdf(
+                rows, barcode_format=request.args.get('format', 'qr'))
+            name = 'stock-location-codes.pdf'
         # Opened in a tab like the control sheet, not force-downloaded: the
         # point is to look at it, then print it.
         return send_file(buf, mimetype='application/pdf', as_attachment=False,
-                         download_name='kitchen-location-codes.pdf')
+                         download_name=name)
+    except ValueError as err:
+        return jsonify({"error": str(err)}), 400
     except Exception as err:                                     # noqa: BLE001
         logger.error(f"location sheet failed: {err}")
         return jsonify({"error": str(err)[:200]}), 500

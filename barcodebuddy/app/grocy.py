@@ -1,5 +1,6 @@
 """Grocy API client."""
 import re
+import time
 import requests
 from typing import Optional, Dict, Any
 import logging
@@ -259,15 +260,44 @@ class GrocyClient:
         logger.info(f"📍 Product presets resolved: location={loc} qu={qu}")
         return self._presets
 
-    def get_locations(self) -> list:
+    # Long enough to keep the scan path off a round trip, short enough that
+    # adding a shelf in Grocy takes effect while you are still at the printer.
+    LOCATIONS_TTL = 300
+
+    def get_locations(self, force: bool = False) -> list:
         """
-        Grocy's locations. Cached: they change roughly never and this sits on
-        the scan path, where a location QR must resolve without a round trip
-        the person is waiting on.
+        Grocy's locations, cached with a TTL.
+
+        The cache is here because this sits on the SCAN PATH: a location QR has
+        to resolve without a round trip that somebody is standing there waiting
+        for. It was previously cached forever, which was a real bug and a
+        nastier one than "the printed sheet is stale".
+
+        A location added in Grocy after the add-on started was invisible to
+        `loc.resolve()`, so its freshly printed QR came back as *unknown
+        location code* -- and a rejected code CLEARS the gun by design, so
+        every following scan silently landed on the preset shelf. That is
+        precisely the misfiling this whole feature exists to prevent, produced
+        by the feature itself.
+
+        `force=True` for anything human-initiated, like generating the label
+        sheet: nobody is waiting on the scan path there, and a sheet must never
+        be printed from a stale list.
+
+        A FAILED FETCH KEEPS THE OLD LIST. Emptying it on a Grocy blip would
+        make every location code unknown at once, which clears every gun --
+        turning a momentary network problem into a shelf full of misfiled
+        products. Stale beats empty here.
         """
-        if getattr(self, "_locations_cache", None) is None:
-            self._locations_cache = self._request('GET', 'objects/locations') or []
-        return self._locations_cache
+        now = time.monotonic()
+        fresh = (getattr(self, "_locations_cache", None) is not None
+                 and now - getattr(self, "_locations_cached_at", 0) < self.LOCATIONS_TTL)
+        if force or not fresh:
+            fetched = self._request('GET', 'objects/locations')
+            if fetched is not None:
+                self._locations_cache = fetched
+                self._locations_cached_at = now
+        return getattr(self, "_locations_cache", None) or []
 
     def get_default_location_id(self) -> int:
         """
