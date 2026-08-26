@@ -1169,6 +1169,12 @@ def status():
         'grocy_configured': config.has_grocy,
         'grocy_connected': grocy_client is not None,
         'scanner_devices': scanner.active_devices,
+        # Grouped into PHYSICAL guns as well as raw nodes. One gun is several
+        # /dev/hidrawN interfaces -- 4 devices here are 2 guns -- so anything
+        # reporting a count needs this one, not the length of the list above.
+        # A dashboard saying "4 guns" is simply wrong.
+        'guns': _connected_guns(),
+        'gun_count': len(_connected_guns()),
         'scanner_active': scanner.running,
         'scan_count': len(recent_scans)
     })
