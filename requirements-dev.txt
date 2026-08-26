@@ -1,0 +1,9 @@
+# Test-only. The add-on image installs requirements.txt; this adds pytest and
+# the runtime packages `main` needs at import time, so the real functions can
+# be tested rather than copies of them pasted into a test file.
+pytest
+flask
+flask-babel
+requests
+reportlab
+qrcode

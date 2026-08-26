@@ -25,3 +25,4 @@ options.json
 # Claude Code
 CLAUDE.md
 .claude/
+.venv-test/
