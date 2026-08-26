@@ -208,6 +208,17 @@ def penzeys_hierarchy(sku: str, presets: dict):
             break
 
     parent_name = blend.lower()
+    if parent_id is not None:
+        # The parent was found through a sibling, which means it may have been
+        # RENAMED by a human -- "Mustard Seed Brown" becomes "brown mustard
+        # seed". The child must be named from the parent as it actually is, or
+        # the next variant scanned creates "mustard seed brown bag" alongside
+        # the existing "brown mustard seed bag": same role, two products, one
+        # of them invisible to the person who named the other.
+        info_p = grocy_client.get_product_info(parent_id) or {}
+        actual = ((info_p.get("product") or info_p).get("name") or "").strip()
+        if actual:
+            parent_name = actual
     if parent_id is None:
         parent_id = grocy_client.find_product_by_name(parent_name)
     if parent_id is None:
