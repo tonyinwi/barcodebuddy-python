@@ -17,15 +17,13 @@ def _tidy(value: str) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
-def _barcode_userfields(brand: str, source: str, detail: str) -> dict:
+def _barcode_userfields(brand: str, source: str) -> dict:
     """Only send fields that have a value -- a blank overwrite is still a write."""
     fields = {}
     if _tidy(brand):
         fields['brand'] = _tidy(brand)
     if _tidy(source):
         fields['source'] = _tidy(source)
-    if _tidy(detail):
-        fields['detail'] = _tidy(detail)
     return fields
 
 
@@ -447,6 +445,11 @@ class GrocyClient:
         original retail name is the only record of what was actually on the
         shelf. Without it, "I clearly bought two for some reason" has no answer.
 
+        It is written to the barcode's NATIVE `note` column rather than a
+        userfield. Same place, one less field to define, and Grocy already
+        renders it as the Note column in the barcode table on the product page --
+        so it is visible where somebody would look for it, without any setup.
+
         Returns True if the barcode was added. Userfield failures are logged but
         do not fail the call -- the barcode mapping is what matters.
         """
@@ -454,6 +457,8 @@ class GrocyClient:
             'product_id': product_id,
             'barcode': barcode
         }
+        if _tidy(detail):
+            data['note'] = _tidy(detail)
         result = self._request('POST', 'objects/product_barcodes', json=data)
         if not result:
             return False
@@ -463,7 +468,7 @@ class GrocyClient:
         barcode_id = result.get('created_object_id')
         if barcode_id and (brand or source):
             self.set_userfields('product_barcodes', barcode_id,
-                                _barcode_userfields(brand, source, detail))
+                                _barcode_userfields(brand, source))
         return True
 
     def update_product_name(self, product_id: int, new_name: str) -> bool:
