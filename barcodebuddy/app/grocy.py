@@ -1,4 +1,5 @@
 """Grocy API client."""
+import re
 import requests
 from typing import Optional, Dict, Any
 import logging
