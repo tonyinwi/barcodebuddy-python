@@ -96,6 +96,34 @@ def is_gtin(barcode: str) -> bool:
     return code.isdigit() and len(code) in GTIN_LENGTHS
 
 
+def is_product_code(barcode: str) -> bool:
+    """
+    Could this payload be a product's number at all?
+
+    Deliberately WEAKER than is_gtin(). A scanner reads whatever is printed,
+    and packaging carries more than barcodes: recipe QR codes, marketing URLs,
+    loyalty codes. Two of those became products --
+
+        HTTPSWWWPSSEASONINGCOMBLOGSRECIPESTAGGEDPRIME-TIME-BUTTERY-BEEF-RUB
+        HTTPCONGRANETUGTFTQQ
+
+    -- and one of them was a real jar of Prime Time Buttery Beef Rub whose
+    actual UPC we already had.
+
+    The line is NUMERIC, not GTIN-valid. A blanket non-GTIN refusal would make
+    Penzeys unscannable: their bags carry 5-digit item numbers, which is why
+    is_gtin(), the 1392-SKU catalogue and the penzeys provider all exist. Wild
+    Fork prints a 19-digit internal code. Both are real products and both are
+    numeric.
+
+    So: digits mean somebody's item number, and we create it -- a source that
+    knows those numbers can name it later. Anything else is not a product
+    number and never will be, and creating a placeholder for it just makes
+    rubbish that has to be found and deleted by hand.
+    """
+    return (barcode or "").strip().isdigit()
+
+
 KITCHEN_STACK_URL = "http://172.16.0.138:8099"
 
 
@@ -330,7 +358,19 @@ def handle_barcode(barcode: str, device: str = None):
         return
 
     # A product scan is activity: the idle clock is per gun, not per session.
+    # Counted BEFORE the refusal below -- scanning a QR code by mistake still
+    # means somebody is standing at the shelf with the gun in their hand, and
+    # expiring the shelf underneath them would be wrong.
     location_tracker.touch(device)
+
+    # Not everything printed on a package is a product number. Refuse the rest
+    # here rather than manufacturing an "Unknown <payload>" product for it.
+    if not is_product_code(barcode):
+        scan_result['status'] = 'error'
+        scan_result['message'] = "❌ Not a product barcode - looks like a QR code or URL"
+        logger.warning(f"🚫 refused, not a product code: {barcode[:60]}")
+        finish_scan(scan_result)
+        return
 
     # Regular product barcode handling
     if grocy_client:
