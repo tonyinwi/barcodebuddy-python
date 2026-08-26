@@ -332,7 +332,9 @@ class GrocyClient:
                        min_stock_amount: float = 0,
                        location_id=None, qu_id_purchase=None,
                        qu_id_stock=None,
-                       default_best_before_days: int = -1) -> Optional[int]:
+                       default_best_before_days: int = -1,
+                       parent_product_id=None,
+                       no_own_stock: int = 0) -> Optional[int]:
         """
         Create a new product in Grocy.
 
@@ -355,6 +357,14 @@ class GrocyClient:
         unit happen to sort first, which is usually the wrong shelf.
 
         Returns the product ID if successful, None otherwise.
+
+        parent_product_id / no_own_stock build a generic parent with its
+        variants underneath. no_own_stock is a database CHECK, not a hint:
+        Grocy refuses to add stock to such a product outright, which is what
+        guarantees stock lands on a child and never on the generic. A parent
+        holding stock while its children were empty would make recipe
+        resolution claim you own something you do not.
+
         """
         # Fall back to the first location / unit only when the caller has nothing
         # better. Anything from Grocy's own lookup is preferred.
@@ -375,6 +385,10 @@ class GrocyClient:
             'min_stock_amount': min_stock_amount,
             'default_best_before_days': default_best_before_days
         }
+        if parent_product_id is not None:
+            data['parent_product_id'] = parent_product_id
+        if no_own_stock:
+            data['no_own_stock'] = 1
         result = self._request('POST', 'objects/products', json=data)
         if result and 'created_object_id' in result:
             # Grocy returns created_object_id as a string but reports ids as ints
