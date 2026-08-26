@@ -2,7 +2,7 @@ name: "Kitchen Scanner"
 # Bump this on EVERY deploy. It is the only cheap way to tell which build is
 # running: the add-on is built from a git branch, so without a bump the version
 # string is identical before and after a push and a stale clone is invisible.
-version: "2.18.2-beta.30"
+version: "2.18.2-beta.31"
 # slug is deliberately unchanged from upstream: Home Assistant identifies an
 # installed add-on by slug, so renaming it would orphan an existing install
 # and its configuration.
@@ -64,6 +64,9 @@ options:
   # "0581:011a". Leave empty to fall back to the global ADD/CONSUME toggle.
   scanner_add_device: ""
   scanner_consume_device: ""
+  # Friendly names for the guns, one per line: 0581:011a = Pantry gun
+  # Keyed on the USB id, because one gun is several /dev/hidrawN nodes.
+  scanner_names: ""
 
   # Barcode Configuration
   barcode_add: "BBUDDY-ADD"
@@ -116,6 +119,7 @@ schema:
   # Per-device scanner mode (fork)
   scanner_add_device: str?
   scanner_consume_device: str?
+  scanner_names: str?
 
   # Barcode Configuration
   barcode_add: str

@@ -168,6 +168,17 @@
             font-size: 11px; opacity: .7; margin-top: 12px;
             font-family: 'Courier New', monospace;
         }
+        /* Deliberately quiet. Ending a shelf early is a normal part of the
+           walk, not a destructive action -- it reverts to the preset, which is
+           exactly what the 10-minute expiry does on its own. */
+        .shelf-done {
+            background: rgba(255,255,255,.18);
+            border: 1px solid rgba(255,255,255,.45);
+            color: #fff; font-size: 13px; font-weight: 600;
+            padding: 7px 16px; border-radius: 6px; cursor: pointer;
+            flex-shrink: 0; white-space: nowrap;
+        }
+        .shelf-done:hover { background: rgba(255,255,255,.30); }
 
         /* A picture is the cheapest possible check on the most expensive
            failure: a lookup that confidently returns the wrong product. A
@@ -315,10 +326,28 @@
             </div>
             <div class="info-box">
                 <strong>{{ _('active_scanner_devices') }}:</strong>
-                {% if scanner_devices %}
+                {# Grouped by USB id, because one gun is several /dev/hidrawN
+                   nodes and listing them raw says "four scanners" when there
+                   are two. Name them in the add-on options: scanner_names,
+                   e.g. `0581:011a = Pantry gun`. #}
+                {% if connected_guns %}
                     <ul style="margin: 5px 0 0 20px;">
-                    {% for device in scanner_devices %}
-                        <li>{{ device }}</li>
+                    {% for gun in connected_guns %}
+                        <li>
+                            <strong>{{ gun.label }}</strong>
+                            {% if gun.usb and not gun.named %}
+                                <span style="color:#a8a29e;">&mdash; unnamed</span>
+                            {% endif %}
+                            <br>
+                            <span style="font-size:11px;color:#a8a29e;">
+                                {% if gun.usb %}{{ gun.usb }} &middot; {% endif %}
+                                {{ gun.devices | join(', ') }}
+                                {% if not gun.usb %}
+                                    &mdash; <span style="color:#f59e0b;">USB id unreadable:
+                                    global mode, no location</span>
+                                {% endif %}
+                            </span>
+                        </li>
                     {% endfor %}
                     </ul>
                 {% else %}
@@ -856,17 +885,30 @@
                     ? `<div class="needs-review"><b>${review}</b>
                          <span>need review</span></div>`
                     : '';
-                // Several guns is the unusual case, so the gun id is only
-                // worth the line when it disambiguates something.
-                const gun = keys.length > 1
-                    ? `<div class="shelf-gun">${esc(k)}</div>` : '';
+                // The gun's name only earns a line when there is more than
+                // one, or when it has been given a real name in the config --
+                // "usb:0581:011a" on its own tells nobody anything.
+                const label = g.label || k;
+                const named = label !== k;
+                const gun = (keys.length > 1 || named)
+                    ? `<div class="shelf-gun">${esc(label)}</div>` : '';
                 return `
                   <div class="shelf">
-                    <div style="font-size:13px;opacity:.85;letter-spacing:.06em;
-                                text-transform:uppercase;">📍 scanning into</div>
-                    <div class="shelf-name">${esc(g.name)}</div>
-                    <div class="shelf-clock ${left <= 120 ? 'soon' : ''}">
-                      ${left > 0 ? `${mins}:${secs} left` : 'expired'}
+                    <div style="display:flex;align-items:flex-start;
+                                justify-content:space-between;gap:12px;">
+                      <div style="min-width:0;">
+                        <div style="font-size:13px;opacity:.85;letter-spacing:.06em;
+                                    text-transform:uppercase;">📍 scanning into</div>
+                        <div class="shelf-name">${esc(g.name)}</div>
+                        <div class="shelf-clock ${left <= 120 ? 'soon' : ''}">
+                          ${left > 0 ? `${mins}:${secs} left` : 'expired'}
+                        </div>
+                      </div>
+                      <button class="shelf-done"
+                              onclick="clearShelf('${esc(k)}')"
+                              title="Stop scanning into ${esc(g.name)} and go back to the preset shelf">
+                        Done
+                      </button>
                     </div>
                     <div class="shelf-counts">
                       <div><b>${g.scanned || 0}</b><span>scanned here</span></div>
@@ -877,6 +919,23 @@
                     ${gun}
                   </div>`;
             }).join('');
+        }
+
+        function clearShelf(gun) {
+            // Optimistic: drop the card immediately rather than waiting for a
+            // round trip. You press this while walking away from a shelf, and
+            // a card that lingers for two seconds reads as "it did not work",
+            // which invites a second press.
+            delete SHELVES[gun];
+            renderShelves();
+            fetch('api/locations/clear', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({gun: gun})
+            }).then(r => r.json())
+              .then(d => { SHELVES = d.guns || {}; renderShelves(); })
+              .catch(err => { console.error('Clear location error:', err);
+                              loadShelves(); });
         }
 
         function loadShelves() {

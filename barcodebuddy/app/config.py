@@ -69,6 +69,53 @@ class Config:
         return str(self._config.get('ha_webhook_url', '') or '').strip()
 
     @property
+    def scanner_names(self) -> dict:
+        """
+        Friendly names for the guns, keyed by USB id.
+
+        `0581:011a = Pantry gun` per line, or comma separated.
+
+        KEYED ON THE USB ID, NOT THE DEVICE NODE, because that is the identity
+        everything else here already uses: one physical gun presents SEVERAL
+        /dev/hidrawN nodes -- 0581:011a is hidraw0 and hidraw1, 0461:4d86 is
+        hidraw2 and hidraw3 -- and the numbering shifts when things are
+        replugged. Naming a node would mean naming the same gun twice and
+        having it come undone at the next reboot.
+
+        ⚠️ TWO IDENTICAL GUNS WOULD SHARE ONE NAME. `device_usb_id()` reads
+        vendor:product out of sysfs and nothing more, so two of the same model
+        are indistinguishable -- and that is not a limitation of naming, it is
+        already true of `resolve_scan_mode()` and of the per-gun location. The
+        two here are different models, so it does not arise. If a second
+        identical gun ever appears, HID_UNIQ (a serial, which the YuRiot has
+        and the other does not) or HID_PHYS (the USB port path, which changes
+        when replugged) would be where to look.
+        """
+        raw = str(self._config.get('scanner_names', '') or '')
+        names = {}
+        for line in raw.replace(',', '\n').splitlines():
+            if '=' not in line:
+                continue
+            usb, _, label = line.partition('=')
+            usb, label = usb.strip().lower(), label.strip()
+            if usb and label:
+                names[usb] = label
+        return names
+
+    def gun_label(self, key: str) -> str:
+        """
+        Turn a tracker key into something a person recognises.
+
+        The keys are `usb:0581:011a` or `dev:/dev/hidraw0` -- correct, stable,
+        and meaningless to somebody holding one of two guns wondering which
+        card on screen is theirs.
+        """
+        key = str(key or '')
+        if key.startswith('usb:'):
+            return self.scanner_names.get(key[4:], key)
+        return self.scanner_names.get(key, key)
+
+    @property
     def scanner_add_device(self) -> str:
         """
         USB "vendor:product" of the gun that always means ADD, e.g. "0581:011a".
