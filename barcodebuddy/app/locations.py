@@ -150,6 +150,30 @@ class LocationTracker:
         with self._lock:
             self._by_device.pop(self._key(device), None)
 
+    def clear_key(self, key):
+        """
+        Forget a gun's location by its TRACKER KEY rather than a device path.
+
+        The UI only ever sees keys -- `snapshot()` is keyed that way -- and a
+        person pressing "done with this shelf" is looking at a card, not
+        holding a /dev/hidrawN. Resolving a key back to some device path just
+        to hand it to `clear()` would mean guessing which of a gun's several
+        nodes to name.
+
+        Returns True if something was actually forgotten, so the caller can
+        say so rather than reporting success for a shelf that had already
+        expired on its own.
+        """
+        with self._lock:
+            return self._by_device.pop(str(key), None) is not None
+
+    def clear_all(self):
+        """Forget every gun. Returns how many were cleared."""
+        with self._lock:
+            count = len(self._by_device)
+            self._by_device.clear()
+            return count
+
     def touch(self, device):
         """A product scan counts as activity: the idle clock is per gun."""
         with self._lock:

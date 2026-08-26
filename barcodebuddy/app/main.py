@@ -922,6 +922,7 @@ def index():
     return render_template('index.html',
                          has_grocy=config.has_grocy,
                          scanner_devices=scanner.active_devices,
+                         connected_guns=_connected_guns(),
                          current_locale=get_locale())
 
 @app.route('/api/download-location-sheet')
@@ -962,6 +963,53 @@ def download_location_sheet():
         return jsonify({"error": str(err)[:200]}), 500
 
 
+def _connected_guns():
+    """
+    The active devices grouped into PHYSICAL GUNS.
+
+    Listing /dev/hidraw0..3 says "four scanners" to anyone reading it, and
+    there are two: each gun exposes several HID interfaces. Grouping by USB id
+    is the same identity the mode binding and the location tracker use, so the
+    list on screen matches the thing those are actually keyed on.
+    """
+    guns, unresolved = {}, []
+    for dev in scanner.active_devices:
+        usb = device_usb_id(dev)
+        if usb is None:
+            unresolved.append(dev)
+            continue
+        guns.setdefault(usb, []).append(dev)
+
+    out = []
+    for usb, devices in sorted(guns.items()):
+        out.append({"usb": usb, "label": config.gun_label(f"usb:{usb}"),
+                    "named": f"usb:{usb}" != config.gun_label(f"usb:{usb}"),
+                    "devices": sorted(devices)})
+    for dev in sorted(unresolved):
+        # Named apart rather than hidden: an unreadable USB id means this gun
+        # falls back to the global mode and cannot hold a location, which is
+        # worth seeing rather than discovering at a shelf.
+        out.append({"usb": None, "label": dev, "named": False,
+                    "devices": [dev]})
+    return out
+
+
+def _guns_for_ui():
+    """
+    The tracker snapshot with a human name on each gun.
+
+    The key stays in the payload as `gun` because that is what the clear
+    endpoint takes; `label` is only ever for reading.
+    """
+    out = {}
+    for key, value in location_tracker.snapshot().items():
+        entry = dict(value)
+        entry['gun'] = key
+        entry['label'] = config.gun_label(key)
+        out[key] = entry
+    return out
+
+
 @app.route('/api/locations')
 def locations_state():
     """
@@ -974,7 +1022,7 @@ def locations_state():
         rows = []
     return jsonify({
         "idle_seconds": location_tracker.idle_seconds,
-        "guns": location_tracker.snapshot(),
+        "guns": _guns_for_ui(),
         "codes": [{"id": r.get("id"), "name": r.get("name"),
                    "barcode": loc.barcode_for(r.get("name"))} for r in rows],
     })
@@ -1016,6 +1064,32 @@ def product_picture(product_id):
     resp.headers['Content-Type'] = r.headers.get('Content-Type', 'image/jpeg')
     resp.headers['Cache-Control'] = 'private, max-age=3600'
     return resp
+
+
+@app.route('/api/locations/clear', methods=['POST'])
+def clear_location():
+    """
+    Stop scanning into a shelf, without waiting out the 10-minute expiry.
+
+    The expiry exists so a forgotten gun cannot misfile the next cupboard. It
+    is a backstop, not a workflow: when you have finished a shelf and are
+    walking to the next room, ten minutes of "everything lands in Spice
+    Cabinet" is exactly the window this feature exists to close.
+
+    Clearing REVERTS TO THE PRESET, which is the same thing expiry does and
+    the same thing a rejected location code does. There is deliberately no
+    third state -- `products.location_id` is NOT NULL, so "no location" is not
+    something Grocy can hold.
+    """
+    data = request.get_json(silent=True) or {}
+    gun = str(data.get('gun') or '').strip()
+    if gun:
+        cleared = 1 if location_tracker.clear_key(gun) else 0
+    else:
+        cleared = location_tracker.clear_all()
+    logger.info(f"📍 Location focus cleared ({cleared} gun(s)) — back to the preset")
+    return jsonify({"success": True, "cleared": cleared,
+                    "guns": _guns_for_ui()})
 
 
 @app.route('/api/scans')
