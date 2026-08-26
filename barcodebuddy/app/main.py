@@ -1097,6 +1097,34 @@ def get_scans():
     """Get recent scans."""
     return jsonify(recent_scans)
 
+
+@app.route('/api/scans/recent')
+def get_scans_recent():
+    """
+    The last few scans, wrapped in an OBJECT rather than returned as a bare
+    array.
+
+    The shape is the whole point. A consumer that wants the feed as one value
+    -- a Home Assistant REST sensor, say -- cannot hoist a top-level array into
+    an attribute, so it ends up declaring one sensor per index with a
+    `$[0]`, `$[1]`... path. Those warn on EVERY poll whenever the list is
+    shorter than the highest index, which after any scanner restart is always,
+    until enough things have been scanned. Four sensors, four warnings, every
+    ten seconds, saying nothing.
+
+    A dict parses whether it holds nothing or fifty. `/api/scans` keeps
+    returning the bare array for what already reads it.
+    """
+    try:
+        n = max(1, min(50, int(request.args.get('n', 6))))
+    except (TypeError, ValueError):
+        n = 6
+    return jsonify({
+        'scans': recent_scans[:n],
+        'count': len(recent_scans[:n]),
+        'total': len(recent_scans),
+    })
+
 @app.route('/api/scan', methods=['POST'])
 def manual_scan():
     """Manual barcode entry."""
