@@ -154,6 +154,98 @@ def log_provider_check():
             logger.warning(f"      ⚠  {w}")
 
 
+def penzeys_hierarchy(sku: str, presets: dict):
+    """
+    Build (or find) the generic parent and the right child for a Penzeys SKU.
+
+    Penzeys sells the same blend as a jar and as a bag -- 551 and 525 of 1392
+    SKUs. The bag is bought; the jar is refilled from it. So they are separate
+    products with separate pictures, prices, stock and locations, under one
+    generic parent that recipes can ask about.
+
+        mustard seed brown        no_own_stock=1  min=0
+          |- ... bag              min=1   <- the restock signal
+          |- ... jar              min=0   <- tracked, never nags
+
+    THE PARENT IS FOUND THROUGH A SIBLING, NOT BY NAME. Penzeys says "Mustard
+    Seed Brown" where a recipe says "brown mustard seed", so the parent gets
+    renamed by a human sooner or later. A name lookup would then miss it and
+    build a duplicate on the next variant scanned. Any other SKU of the same
+    blend that is already a barcode in Grocy points at the real parent, however
+    it has since been named.
+
+    Returns (child_product_id, note) or (None, reason).
+    """
+    try:
+        r = requests.get(f"{KITCHEN_STACK_URL}/api/penzeys/blend/{sku}", timeout=10)
+        if r.status_code != 200:
+            return None, f"blend lookup returned {r.status_code}"
+        info = r.json()
+    except Exception as err:                                  # noqa: BLE001
+        return None, f"blend lookup failed: {err}"
+
+    container = info.get("container") or ""
+    if not container:
+        # Extracts by the fluid ounce, vanilla by the bean. No container means
+        # no jar/bag split to make, so leave it as an ordinary product.
+        return None, "no container on this SKU"
+
+    blend = (info.get("blend") or "").strip()
+    if not blend:
+        return None, "no blend name"
+
+    # Find the parent through a sibling that is already in Grocy.
+    parent_id = None
+    for sib in info.get("siblings", []):
+        existing = grocy_client.find_product_by_barcode(str(sib))
+        if not existing:
+            continue
+        prod = existing.get("product", existing) if isinstance(existing, dict) else {}
+        pid = prod.get("parent_product_id")
+        if pid:
+            parent_id = int(pid)
+            logger.info(f"🌳 found the parent via sibling SKU {sib} (product {parent_id})")
+            break
+
+    parent_name = blend.lower()
+    if parent_id is None:
+        parent_id = grocy_client.find_product_by_name(parent_name)
+    if parent_id is None:
+        parent_id = grocy_client.create_product(
+            name=parent_name,
+            description="Generic parent for a Penzeys blend. Stock lives on the "
+                        "jar and bag children; this exists so a recipe asking "
+                        "for it can see whether any exists at all.",
+            min_stock_amount=0,
+            no_own_stock=1,
+            location_id=presets.get("location_id"),
+            qu_id_purchase=presets.get("qu_id"),
+            qu_id_stock=presets.get("qu_id"))
+        if parent_id is None:
+            return None, "could not create the parent"
+        logger.info(f"🌳 created parent {parent_name!r} (product {parent_id})")
+
+    child_name = f"{parent_name} {container}"
+    child_id = grocy_client.find_product_by_name(child_name)
+    if child_id is None:
+        child_id = grocy_client.create_product(
+            name=child_name,
+            description=f"{info.get('size','')} {info.get('weight','')}".strip(),
+            # The bag is bought and must reach the shopping list. The jar is
+            # refilled from the bag, so a minimum on it would ask you to buy
+            # something you never buy.
+            min_stock_amount=1 if container == "bag" else 0,
+            parent_product_id=parent_id,
+            location_id=presets.get("location_id"),
+            qu_id_purchase=presets.get("qu_id"),
+            qu_id_stock=presets.get("qu_id"))
+        if child_id is None:
+            return None, "could not create the child"
+        logger.info(f"🌳 created child {child_name!r} (product {child_id}) "
+                    f"min_stock={1 if container == 'bag' else 0}")
+    return child_id, f"{parent_name} / {container}"
+
+
 def lookup_chain(barcode):
     """
     Ask Grocy. That is the whole function now, on purpose.
@@ -172,11 +264,13 @@ def lookup_chain(barcode):
     Returns (product | None, source_name | None, attempts) -- the same shape
     as before, so the scan path is untouched.
     """
-    if not is_gtin(barcode):
-        logger.info(f"⏭  {barcode} is not a GTIN ({len(barcode)} digits) - "
-                    "skipping external lookup")
-        return None, None, [{"provider": "(chain)",
-                             "outcome": "skipped_non_gtin", "latency_ms": 0}]
+    # NO is_gtin GATE. It moved: the engine now decides per provider, and the
+    # local Penzeys catalogue is the one that accepts a non-GTIN, because an
+    # exact dict lookup on a retailer's own item number cannot pad or fuzzy
+    # match. Keeping a copy here meant #116 never reached the scan path -- a
+    # Penzeys bag still landed as "Unknown 55540" while /api/lookup resolved it
+    # perfectly. QR codes and URLs are already refused by is_product_code(),
+    # so what passes here is numeric and worth asking about.
     if not grocy_client:
         return None, None, []
 
@@ -506,8 +600,31 @@ def handle_barcode(barcode: str, device: str = None):
                     # seen under a different barcode must attach to the existing product
                     # instead of failing the create. Same name = same product; this is
                     # free dedup at intake.
-                    product_id = grocy_client.find_product_by_name(product_name)
-                    reused = product_id is not None
+                    # A Penzeys SKU is not one product, it is a container of a
+                    # blend. Build (or find) the generic parent and put this
+                    # container under it, so the bag carries the restock signal
+                    # and the jar -- which is refilled, not bought -- does not.
+                    product_id = None
+                    reused = False
+                    if (external_product.get('__source') or '') == 'penzeys':
+                        here = location_tracker.current(device)
+                        product_id, note = penzeys_hierarchy(barcode, {
+                            "location_id": ((here or {}).get("id")
+                                            or external_product.get('location_id')),
+                            "qu_id": external_product.get('qu_id_stock'),
+                        })
+                        if product_id:
+                            reused = True     # created or found by the helper
+                            product_name = note
+                            scan_result['product'] = note
+                            logger.info(f"🌳 penzeys: {note}")
+                        else:
+                            logger.info(f"🌳 penzeys hierarchy skipped: {note} "
+                                        "-- falling back to a flat product")
+
+                    if product_id is None:
+                        product_id = grocy_client.find_product_by_name(product_name)
+                        reused = product_id is not None
 
                     if reused:
                         logger.info(f"🔗 '{product_name}' already exists (ID {product_id}) - attaching barcode {barcode}")
