@@ -128,6 +128,56 @@
             margin-right: 10px;
         }
 
+        /* The shelf you are standing at. Sized to be read at arm's length
+           while holding a gun in the other hand -- this is the safety net for
+           the 10-minute expiry, and it is useless if you have to peer at it. */
+        .shelf {
+            background: linear-gradient(135deg, #0ea5e9 0%, #0369a1 100%);
+            color: #fff;
+            border-radius: 10px;
+            padding: 18px 20px;
+            margin-bottom: 20px;
+        }
+        .shelf-name {
+            font-size: 30px;
+            font-weight: 700;
+            line-height: 1.15;
+            word-break: break-word;
+        }
+        .shelf-clock {
+            font-variant-numeric: tabular-nums;
+            font-size: 17px;
+            opacity: .92;
+            margin-top: 4px;
+        }
+        /* Under two minutes the shelf is about to revert to the preset, and
+           the next thing scanned lands somewhere else. That deserves to look
+           different, not just count lower. */
+        .shelf-clock.soon { color: #fde047; font-weight: 700; opacity: 1; }
+        .shelf-counts {
+            display: flex;
+            gap: 22px;
+            margin-top: 14px;
+            flex-wrap: wrap;
+        }
+        .shelf-counts b { font-size: 26px; display: block; line-height: 1.1; }
+        .shelf-counts span { font-size: 12px; text-transform: uppercase;
+                             letter-spacing: .05em; opacity: .85; }
+        .shelf-counts .needs-review b { color: #fde047; }
+        .shelf-gun {
+            font-size: 11px; opacity: .7; margin-top: 12px;
+            font-family: 'Courier New', monospace;
+        }
+
+        /* A picture is the cheapest possible check on the most expensive
+           failure: a lookup that confidently returns the wrong product. A
+           fuel filter is obvious in a photograph and invisible in a name. */
+        .scan-thumb {
+            width: 56px; height: 56px; object-fit: contain;
+            border-radius: 6px; background: #f3f4f6;
+            margin-right: 12px; flex-shrink: 0;
+        }
+
         .info-box {
             background: #f3f4f6;
             border-left: 4px solid #667eea;
@@ -266,6 +316,10 @@
                 <!-- Pending items will be dynamically inserted here -->
             </div>
         </div>
+
+        <!-- Hidden until a gun actually has a shelf: an empty box saying
+             "no location" is noise on every screen that is not an inventory. -->
+        <div id="shelf-cards"></div>
 
         <div class="card">
             <h2>📋 {{ _('recent_scans') }}</h2>
@@ -684,6 +738,12 @@
 
                     list.innerHTML = scans.map((scan, index) => {
                         const time = new Date(scan.timestamp).toLocaleTimeString();
+                        // Product names come from third-party lookups and land
+                        // in innerHTML. One escaper, used on every value, so
+                        // there is no second place to forget.
+                        const esc = s => String(s == null ? '' : s).replace(
+                            /[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',
+                                               '"':'&quot;',"'":'&#39;'}[c]));
                         const emoji = scan.status === 'success' ? '✅' :
                                     scan.status === 'error' ? '❌' :
                                     scan.status === 'not_found' ? '❓' :
@@ -701,21 +761,34 @@
                                     style="flex: 1; padding: 8px; border: 2px solid #f59e0b; border-radius: 5px;"
                                 >
                                 <button
-                                    onclick="createProduct('${scan.barcode}', ${index})"
+                                    onclick="createProduct('${esc(scan.barcode)}', ${index})"
                                     style="padding: 8px 20px; background: #10b981; white-space: nowrap;">
                                     ${translations.create_and_add}
                                 </button>
                             </div>
                         ` : '';
 
+                        // No picture is a NORMAL outcome, not an error state --
+                        // plenty of barcodes resolve without one -- so nothing
+                        // is drawn rather than drawing a placeholder that reads
+                        // as something having gone wrong. onerror clears it the
+                        // same way when a provider CDN blocks the hotlink; the
+                        // scan already completed either way.
+                        const thumb = scan.image
+                            ? `<img class="scan-thumb" src="${esc(scan.image)}" alt=""
+                                    loading="lazy"
+                                    onerror="this.style.display='none'">`
+                            : '';
+
                         return `
                             <div class="scan-item">
+                                ${thumb}
                                 <div style="width: 100%;">
                                     <div>
                                         <span class="emoji">${emoji}</span>
-                                        <span class="scan-barcode">${scan.barcode}</span>
+                                        <span class="scan-barcode">${esc(scan.barcode)}</span>
                                     </div>
-                                    <div class="scan-message">${scan.message}</div>
+                                    <div class="scan-message">${esc(scan.message)}</div>
                                     ${createProductForm}
                                     <div class="scan-time">${time}</div>
                                 </div>
@@ -724,6 +797,74 @@
                     }).join('');
                 })
                 .catch(error => console.error('Load scans error:', error));
+        }
+
+        // ---- the shelf you are standing at (#93) ----
+        // Held locally and ticked down every second, rather than only being
+        // redrawn when the poll answers. A clock that jumps in 5s steps reads
+        // as a frozen UI, which is the opposite of the reassurance it exists
+        // to give.
+        let SHELVES = {};
+
+        function renderShelves() {
+            const host = document.getElementById('shelf-cards');
+            if (!host) return;
+            const esc = s => String(s == null ? '' : s).replace(
+                /[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',
+                                   '"':'&quot;',"'":'&#39;'}[c]));
+            const keys = Object.keys(SHELVES);
+            if (!keys.length) { host.innerHTML = ''; return; }
+
+            host.innerHTML = keys.map(k => {
+                const g = SHELVES[k];
+                const left = Math.max(0, Math.round(g.expires_in));
+                const mins = Math.floor(left / 60);
+                const secs = String(left % 60).padStart(2, '0');
+                const c = g.counts || {};
+                const review = c.unresolved || 0;
+                // Only shown when there is something to review. A permanent
+                // "0 need review" trains the eye to skip the whole row, which
+                // is exactly the number that must not be skipped.
+                const reviewBlock = review
+                    ? `<div class="needs-review"><b>${review}</b>
+                         <span>need review</span></div>`
+                    : '';
+                // Several guns is the unusual case, so the gun id is only
+                // worth the line when it disambiguates something.
+                const gun = keys.length > 1
+                    ? `<div class="shelf-gun">${esc(k)}</div>` : '';
+                return `
+                  <div class="shelf">
+                    <div style="font-size:13px;opacity:.85;letter-spacing:.06em;
+                                text-transform:uppercase;">📍 scanning into</div>
+                    <div class="shelf-name">${esc(g.name)}</div>
+                    <div class="shelf-clock ${left <= 120 ? 'soon' : ''}">
+                      ${left > 0 ? `${mins}:${secs} left` : 'expired'}
+                    </div>
+                    <div class="shelf-counts">
+                      <div><b>${g.scanned || 0}</b><span>scanned here</span></div>
+                      <div><b>${c.created || 0}</b><span>new</span></div>
+                      <div><b>${c.stocked || 0}</b><span>already known</span></div>
+                      ${reviewBlock}
+                    </div>
+                    ${gun}
+                  </div>`;
+            }).join('');
+        }
+
+        function loadShelves() {
+            fetch('api/locations')
+                .then(r => r.json())
+                .then(d => { SHELVES = d.guns || {}; renderShelves(); })
+                .catch(err => console.error('Load locations error:', err));
+        }
+
+        function tickShelves() {
+            let changed = false;
+            Object.keys(SHELVES).forEach(k => {
+                if (SHELVES[k].expires_in > 0) { SHELVES[k].expires_in -= 1; changed = true; }
+            });
+            if (changed) renderShelves();
         }
 
         // Initialize when DOM is ready
@@ -741,7 +882,12 @@
             setInterval(() => {
                 loadScans();
                 loadPending();
+                loadShelves();
             }, 2000);
+
+            // The clock ticks locally between polls, so it never looks stuck.
+            setInterval(tickShelves, 1000);
+            loadShelves();
 
             // Initial load
             loadScans();
