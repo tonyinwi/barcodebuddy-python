@@ -288,10 +288,29 @@
             <div style="margin-bottom: 15px;">
                 <!-- Generated from Grocy's real locations, so it always matches
                      the house. Scan one at a shelf; what that gun scans next is
-                     created there, until 10 idle minutes pass. -->
-                <button onclick="downloadLocationSheet()" style="width: 100%; background: #0ea5e9;">
-                    📍 Location codes (QR)
-                </button>
+                     created there, until 10 idle minutes pass.
+
+                     STOCK locations, not kitchen ones -- Grocy's cover the whole
+                     house: laundry fridge, garage freezer, basement pantry. -->
+                <label style="display:block;font-size:13px;color:#57534e;margin-bottom:6px;">
+                    📍 Stock location codes
+                </label>
+                <div style="display:flex;gap:6px;">
+                    <select id="label-sheet"
+                            style="flex:1;padding:8px;border:2px solid #0ea5e9;border-radius:5px;">
+                        <option value="">Full-page cards</option>
+                        <option value="8167" selected>Avery 8167 &mdash; 80 up</option>
+                        <option value="5160">Avery 5160 &mdash; 30 up</option>
+                    </select>
+                    <button onclick="downloadLocationSheet()"
+                            style="background:#0ea5e9;white-space:nowrap;">
+                        Print
+                    </button>
+                </div>
+                <div style="font-size:11px;color:#a8a29e;margin-top:5px;">
+                    8167 is small for a QR &mdash; the sheet prints its own module
+                    size. If they will not scan, use 5160.
+                </div>
             </div>
             <div class="info-box">
                 <strong>{{ _('active_scanner_devices') }}:</strong>
@@ -359,7 +378,14 @@
         }
 
         function downloadLocationSheet() {
-            window.open('api/download-location-sheet', '_blank');
+            const sel = document.getElementById('label-sheet');
+            const sheet = sel ? sel.value : '';
+            // Opened in a tab rather than downloaded: the point is to look at
+            // it -- and check the module size printed in the bottom margin --
+            // before committing a sheet of labels to it.
+            window.open('api/download-location-sheet' +
+                        (sheet ? '?sheet=' + encodeURIComponent(sheet) : ''),
+                        '_blank');
         }
 
         function loadPending() {
