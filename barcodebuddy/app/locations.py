@@ -52,7 +52,48 @@ def slug(name: str) -> str:
 
 
 def barcode_for(name: str) -> str:
+    """The slug a name WOULD get. See stored_slug() for the one that counts."""
     return PREFIX + slug(name)
+
+
+def stored_slug(location) -> str:
+    """
+    The slug persisted on the Grocy location, or '' when it has none yet.
+
+    Lives in the `slug` userfield on `locations`. Grocy returns userfields
+    inline on /objects/locations, so reading it costs nothing extra.
+    """
+    uf = (location or {}).get("userfields") or {}
+    return str(uf.get("slug") or "").strip().upper()
+
+
+def barcode_for_location(location) -> str:
+    """
+    The barcode for a location: the STORED slug if it has one, else computed.
+
+    This is the function that matters. `barcode_for(name)` recomputes from the
+    current name every time, which is fine right up until somebody renames a
+    shelf in Grocy -- at which point every label already stuck to that shelf
+    stops resolving, and a rejected location code CLEARS the gun by design, so
+    everything scanned afterwards silently lands on the preset. Renaming
+    "Basement Pantry" to "Basement - Cleaning Pantry" is enough to do it.
+
+    A stored slug makes the printed label authoritative and the display name
+    free to change, which is the right way round: the label is the thing you
+    cannot edit after the fact.
+    """
+    return PREFIX + (stored_slug(location) or slug(location.get("name")))
+
+
+def freeze_slug(location) -> str:
+    """
+    The slug to persist for a location that has none, or '' if it already has.
+
+    IMMUTABLE ONCE SET: an existing slug is never recomputed, never migrated,
+    never "corrected" to match a new name. That is the entire guarantee -- a
+    slug that can change is just a computed slug with extra steps.
+    """
+    return "" if stored_slug(location) else slug(location.get("name"))
 
 
 class LocationTracker:
@@ -234,7 +275,11 @@ def resolve(barcode, locations):
     if not wanted:
         return None, "empty location code"
 
-    matches = [l for l in (locations or []) if slug(l.get("name")) == wanted]
+    # Match the STORED slug where there is one, and fall back to the computed
+    # name only for locations that predate the field. A label carries the slug
+    # it was printed with; the name may have moved on since.
+    matches = [l for l in (locations or [])
+               if (stored_slug(l) or slug(l.get("name"))) == wanted]
     if not matches:
         return None, f"no Grocy location matches '{wanted}'"
     if len(matches) > 1:

@@ -218,7 +218,7 @@ def generate_label_sheet_pdf(locations, sheet_key="8167"):
         y = y_top - sheet.label_h
 
         name = str(row.get("name") or "").strip()
-        payload = loc.barcode_for(name)
+        payload = loc.barcode_for_location(row)
 
         pad = 2.0
         box = sheet.label_h - 2 * pad
@@ -244,8 +244,11 @@ def generate_label_sheet_pdf(locations, sheet_key="8167"):
         c.setFillGray(0)
 
     if rows:
-        worst = min(module_mm(sheet, loc.barcode_for(str(r["name"]).strip()))
-                    for r in rows)
+        # The SAME payload the labels are drawn from. A stored slug can differ
+        # in length from the one the current name would compute, so measuring
+        # the computed string would report a module size for a QR that is not
+        # on the sheet -- and this number is the whole reason the footer exists.
+        worst = min(module_mm(sheet, loc.barcode_for_location(r)) for r in rows)
         note = (f"{sheet.name} · {len(rows)} location(s) · "
                 f"smallest QR module {worst:.2f} mm")
         if worst < MIN_MODULE_MM:
@@ -304,7 +307,7 @@ def generate_location_sheet_pdf(locations, barcode_format='qr'):
     x0, y = 50, height - 120
     for idx, row in enumerate(locations or []):
         name = str(row.get("name") or "")
-        payload = loc.barcode_for(name)
+        payload = loc.barcode_for_location(row)
         col = idx % cols
         x = x0 + col * card_w
         if col == 0 and idx:

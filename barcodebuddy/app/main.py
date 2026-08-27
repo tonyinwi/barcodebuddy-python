@@ -944,6 +944,23 @@ def download_location_sheet():
         if not rows:
             return jsonify({"error": "no locations available from Grocy"}), 503
 
+        # FREEZE ON PRINT. A slug becomes permanent the moment it goes on
+        # paper, so that is when it is written to Grocy -- not at creation
+        # (a location can still be renamed freely before anyone prints it)
+        # and not on the scan path (which stays read-only). Never overwrites:
+        # freeze_slug() returns '' for a location that already has one.
+        frozen = 0
+        for row in rows:
+            new_slug = loc.freeze_slug(row)
+            if not new_slug:
+                continue
+            if grocy_client.set_userfields('locations', row.get('id'),
+                                           {'slug': new_slug}):
+                row.setdefault('userfields', {})['slug'] = new_slug
+                frozen += 1
+        if frozen:
+            logger.info(f"📍 froze {frozen} location slug(s) at print time")
+
         sheet = (request.args.get('sheet') or '').strip()
         if sheet:
             buf = generate_label_sheet_pdf(rows, sheet_key=sheet)
@@ -1023,8 +1040,10 @@ def locations_state():
     return jsonify({
         "idle_seconds": location_tracker.idle_seconds,
         "guns": _guns_for_ui(),
+        # The STORED slug where there is one -- what a printed label carries.
         "codes": [{"id": r.get("id"), "name": r.get("name"),
-                   "barcode": loc.barcode_for(r.get("name"))} for r in rows],
+                   "barcode": loc.barcode_for_location(r),
+                   "frozen": bool(loc.stored_slug(r))} for r in rows],
     })
 
 
