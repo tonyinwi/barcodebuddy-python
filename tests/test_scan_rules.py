@@ -131,3 +131,50 @@ def test_a_blank_value_produces_no_userfield_at_all():
     assert grocy._barcode_userfields("  ", "penzeys") == {"source": "penzeys"}
     assert grocy._barcode_userfields("Penzeys", "penzeys") == {
         "brand": "Penzeys", "source": "penzeys"}
+
+
+# ---------- the feed resolves pictures LATE ----------
+
+def _recent(payload):
+    """Call /api/scans/recent against a hand-placed history."""
+    main.recent_scans[:] = payload
+    with main.app.test_client() as c:
+        return c.get("/api/scans/recent?n=6").get_json()["scans"]
+
+
+def test_a_picture_acquired_after_the_scan_still_reaches_the_feed():
+    """
+    The bug this pins: `image` used to be stamped onto the record when the gun
+    beeped, so a photograph the backfill fetched an hour later never appeared
+    -- the feed showed a placeholder for a product Grocy had a picture of, and
+    only a rescan could fix it.
+
+    The endpoint emits the proxy path whenever it knows the product id. The
+    proxy re-reads Grocy and 404s while there is still no picture, so this is
+    cheap and self-healing rather than optimistic.
+    """
+    got = _recent([{"barcode": "793888658370", "product": "Blue Goose Field Pea",
+                    "product_id": 144, "image": ""}])
+    assert got[0]["image"] == "api/picture/144"
+
+
+def test_an_image_the_scan_already_found_is_left_alone():
+    """A provider's own URL is absolute and must not be replaced by the proxy."""
+    got = _recent([{"product_id": 7, "image": "https://example.test/a.jpg"}])
+    assert got[0]["image"] == "https://example.test/a.jpg"
+
+
+def test_a_scan_with_no_product_gets_no_url():
+    """A mode switch or an unresolved barcode has no product to photograph."""
+    got = _recent([{"barcode": "55540", "image": ""}])
+    assert got[0]["image"] == ""
+
+
+def test_the_stored_history_is_not_mutated():
+    """
+    The record is what was true at the scan. Resolving into a copy keeps the
+    history honest and stops the value being frozen again on the first read.
+    """
+    history = [{"product_id": 144, "image": ""}]
+    _recent(history)
+    assert history[0]["image"] == ""

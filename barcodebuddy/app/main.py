@@ -569,6 +569,11 @@ def handle_barcode(barcode: str, device: str = None):
                 finish_scan(scan_result)
                 return
 
+            # Both branches above converge here, which is the only place the id
+            # is known to be good. It is kept so the feed can resolve the
+            # picture LATER -- see get_scans_recent().
+            scan_result['product_id'] = product_id
+
             # If product info wasn't in the barcode response, fetch it separately
             if not product_info:
                 product_info = grocy_client.get_product_info(product_id)
@@ -1138,9 +1143,25 @@ def get_scans_recent():
         n = max(1, min(50, int(request.args.get('n', 6))))
     except (TypeError, ValueError):
         n = 6
+    # The picture is resolved HERE, not when the gun beeped. `image` was
+    # stamped onto the record at scan time from the product as it was then, so
+    # a photograph acquired afterwards -- by the pictures backfill, or by
+    # anything that fills a product in later -- never reached a scan already in
+    # the list. Blue Goose Field Pea sat in the feed as a placeholder while
+    # Grocy held its picture.
+    #
+    # /api/picture/<id> re-reads Grocy on every request and 404s when there is
+    # still no picture, so emitting the URL costs nothing here and the feed
+    # heals itself on the next poll. Copy rather than mutate: the record is the
+    # history, and it should keep saying what was true at the scan.
+    scans = [
+        {**s, 'image': f"api/picture/{s['product_id']}"}
+        if not s.get('image') and s.get('product_id') else s
+        for s in recent_scans[:n]
+    ]
     return jsonify({
-        'scans': recent_scans[:n],
-        'count': len(recent_scans[:n]),
+        'scans': scans,
+        'count': len(scans),
         'total': len(recent_scans),
     })
 
