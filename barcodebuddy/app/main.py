@@ -27,6 +27,34 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+class _QuietPolling(logging.Filter):
+    """
+    Drop the successful polls from werkzeug's access log.
+
+    Home Assistant polls /api/locations every 5s and /api/scans/recent every
+    10s. The add-on log buffer holds ~100 lines, so on 2026-08-27 every one of
+    them was a poll and the entire evening's 50 scans had been evicted inside a
+    minute. A log you cannot find a scan in is not a log -- and the one moment
+    you need it is right after a scan did something surprising.
+
+    Only 200s are dropped, and only for the endpoints something polls on a
+    timer. Every error, every non-200, and every other route still prints:
+    silence is for the boring case, not for the case that went wrong.
+    """
+
+    POLLED = ("/api/locations", "/api/scans/recent", "/api/status",
+              "/api/picture/")
+
+    def filter(self, record):
+        msg = record.getMessage()
+        if '" 200 ' not in msg:
+            return True
+        return not any(route in msg for route in self.POLLED)
+
+
+logging.getLogger("werkzeug").addFilter(_QuietPolling())
+
 # Initialize Flask app
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'barcode-buddy-secret-key'  # For session management

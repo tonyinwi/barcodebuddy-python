@@ -225,3 +225,37 @@ def test_the_penzeys_refill_exceptions_are_deliberate_and_survive():
     assert "min_stock_amount=0," in src, "the generic parent must stay at 0"
     assert 'min_stock_amount=1 if container == "bag" else 0' in src, \
         "the jar must stay at 0 and the bag at 1"
+
+
+# ---------- the log has to be findable ----------
+
+def _rec(msg):
+    import logging
+    return logging.LogRecord("werkzeug", logging.INFO, "", 0, msg, (), None)
+
+
+def test_successful_polls_are_dropped_from_the_access_log():
+    """
+    Home Assistant polls /api/locations every 5s and /api/scans/recent every
+    10s. The add-on log buffer holds ~100 lines, so on 2026-08-27 all 100 were
+    polls and an entire evening of 50 scans had been evicted inside a minute.
+    """
+    f = main._QuietPolling()
+    for route in ("/api/locations", "/api/scans/recent?n=6", "/api/status"):
+        assert not f.filter(_rec(f'1.2.3.4 - - [x] "GET {route} HTTP/1.1" 200 -'))
+
+
+def test_anything_that_went_wrong_still_prints():
+    """
+    Silence is for the boring case. The one moment the log matters is right
+    after something surprising, so only 200s on polled routes are dropped.
+    """
+    f = main._QuietPolling()
+    assert f.filter(_rec('1.2.3.4 - - [x] "GET /api/locations HTTP/1.1" 500 -'))
+    assert f.filter(_rec('1.2.3.4 - - [x] "GET /api/picture/144 HTTP/1.1" 404 -'))
+
+
+def test_a_real_scan_is_never_hidden():
+    """POST /api/scan is the event the log exists for."""
+    f = main._QuietPolling()
+    assert f.filter(_rec('1.2.3.4 - - [x] "POST /api/scan HTTP/1.1" 200 -'))
