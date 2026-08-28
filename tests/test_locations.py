@@ -176,3 +176,58 @@ def test_an_AMBIGUOUS_slug_is_an_error_and_never_a_guess():
     rows = [{"id": 3, "name": "Big Pantry"}, {"id": 9, "name": "Big  Pantry"}]
     found, err = loc.resolve("BBUDDY-LOC-BIG-PANTRY", rows)
     assert found is None and err
+
+
+# ---------- a generic parent has no shelf ----------
+
+def test_the_generic_parent_takes_the_preset_not_the_active_shelf(monkeypatch):
+    """
+    Found live 2026-08-27: scanning Penzeys bags while the gun was pointed at
+    Laundry - Freezer created `regular chili powder` -- the GENERIC -- in the
+    Laundry Freezer. A no_own_stock parent can never hold stock (it is a
+    database CHECK), so its location is a default for stock that cannot exist.
+    Giving it the active shelf makes it claim to live somewhere, and that stays
+    false after the children move.
+
+    The child must still get the shelf: it is a real jar in a real place.
+    """
+    import main
+
+    created = []
+
+    class FakeGrocy:
+        url = "http://x"
+        api_key = "k"
+
+        def get_product_info(self, pid):
+            return None
+
+        def find_product_by_name(self, name):
+            return None
+
+        def find_product_by_barcode(self, code):
+            return None
+
+        def create_product(self, **kw):
+            created.append(kw)
+            return len(created)
+
+        def add_barcode(self, *a, **k):
+            return True
+
+    monkeypatch.setattr(main, "grocy_client", FakeGrocy())
+    monkeypatch.setattr(main, "penzeys_lookup",
+                        lambda sku: {"blend": "regular chili powder",
+                                     "container": "bag", "size": "3/4 cup bag"},
+                        raising=False)
+
+    main.penzeys_hierarchy("11140", {
+        "location_id": 5,             # Laundry - Freezer, the active shelf
+        "generic_location_id": 7,     # Big Pantry, the preset
+        "qu_id": 1,
+    })
+
+    parent = next(c for c in created if c.get("no_own_stock"))
+    child = next(c for c in created if c.get("parent_product_id"))
+    assert parent["location_id"] == 7, "the generic must sit on the preset"
+    assert child["location_id"] == 5, "the container is really on that shelf"

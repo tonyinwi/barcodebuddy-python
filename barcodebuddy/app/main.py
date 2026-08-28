@@ -234,7 +234,16 @@ def penzeys_hierarchy(sku: str, presets: dict):
                         "for it can see whether any exists at all.",
             min_stock_amount=0,
             no_own_stock=1,
-            location_id=presets.get("location_id"),
+            # THE PRESET, NOT THE SHELF THE GUN IS POINTED AT. A generic parent
+            # is a concept, not an object: no_own_stock is a database CHECK, so
+            # it can never hold stock, and a location is a default for stock
+            # that cannot exist. Giving it the active shelf makes it claim to
+            # live somewhere -- "regular chili powder is in the Laundry
+            # Freezer" -- which is false, and stays false after the children
+            # move. location_id is NOT NULL so it must be something; the preset
+            # is the honest "no particular shelf".
+            location_id=presets.get("generic_location_id")
+            or presets.get("location_id"),
             qu_id_purchase=presets.get("qu_id"),
             qu_id_stock=presets.get("qu_id"))
         if parent_id is None:
@@ -698,8 +707,14 @@ def handle_barcode(barcode: str, device: str = None):
                     if (external_product.get('__source') or '') == 'penzeys':
                         here = location_tracker.current(device)
                         product_id, note = penzeys_hierarchy(barcode, {
+                            # The CHILD is a real jar on a real shelf, so it
+                            # gets the shelf the gun is on. The PARENT is a
+                            # concept and gets the preset -- see the create
+                            # call in penzeys_hierarchy().
                             "location_id": ((here or {}).get("id")
                                             or external_product.get('location_id')),
+                            "generic_location_id":
+                                external_product.get('location_id'),
                             "qu_id": external_product.get('qu_id_stock'),
                         })
                         if product_id:
