@@ -733,13 +733,19 @@ def handle_barcode(barcode: str, device: str = None):
                     if reused:
                         logger.info(f"🔗 '{product_name}' already exists (ID {product_id}) - attaching barcode {barcode}")
                     else:
-                        # A CONSUME scan of an unknown means "gone and needed". Grocy
-                        # cannot hold negative stock -- ConsumeProduct() throws when the
-                        # amount exceeds current stock and there is no override setting --
-                        # so the reorder signal is expressed as a minimum instead: the
-                        # product lands at 0 stock with min_stock_amount 1, which puts it
-                        # in GetMissingProducts and onto the shopping list.
-                        min_stock = 0 if mode == 'add' else 1
+                        # EVERY scanned product gets a reorder point, ADD as well
+                        # as CONSUME. A product with no minimum can never reach
+                        # GetMissingProducts, so it is carried forever and never
+                        # asked for -- which is not tracking, it is a list. Tony,
+                        # 2026-08-27: "i do not care to track it if it doesn't
+                        # have a minimum. i can change it by hand." One scan of an
+                        # ADD created 34 untracked products in ten minutes.
+                        #
+                        # A CONSUME of an unknown still means "gone and needed":
+                        # Grocy cannot hold negative stock -- ConsumeProduct()
+                        # throws when the amount exceeds stock -- so the reorder
+                        # signal is a minimum, not a -1. Both modes now agree.
+                        min_stock = 1
                         # Grocy's own lookup supplies location/unit resolved against
                         # the user's presets; the other sources supply nothing, and
                         # create_product() falls back for those.
@@ -841,7 +847,7 @@ def handle_barcode(barcode: str, device: str = None):
                     if product_id:
                         logger.info(f"🔗 Placeholder '{product_name}' already exists (ID {product_id})")
                     else:
-                        min_stock = 0 if mode == 'add' else 1
+                        min_stock = 1        # see the scan path above
                         # The scanned location matters MOST here. An unknown gets
                         # its name fixed later from the review queue -- but nobody
                         # re-walks the house to fix a shelf, so a placeholder
@@ -1284,7 +1290,7 @@ def create_product():
         # a consume of a product that does not exist yet means "gone and needed",
         # and Grocy cannot hold negative stock. Create it at 0 with a reorder
         # point rather than attempting a consume that ConsumeProduct() rejects.
-        min_stock = 0 if current_mode == 'add' else 1
+        min_stock = 1        # every scanned product is tracked; see the scan path
         product_id = grocy_client.create_product(
             product_name,
             description=f"Created via Barcode Buddy",
@@ -1558,7 +1564,7 @@ def resolve_pending():
             # resolving a pending item in consume mode means "gone and needed",
             # and a product created here has 0 stock. Carry that as a reorder
             # point instead of a consume ConsumeProduct() would reject.
-            min_stock = 1 if mode != 'add' else 0
+            min_stock = 1        # every scanned product is tracked; see the scan path
             product_id = grocy_client.create_product(product_name, description,
                                                      min_stock_amount=min_stock)
             if not product_id:

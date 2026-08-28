@@ -178,3 +178,50 @@ def test_the_stored_history_is_not_mutated():
     history = [{"product_id": 144, "image": ""}]
     _recent(history)
     assert history[0]["image"] == ""
+
+
+# ---------- every scanned product is tracked ----------
+
+def test_no_creation_path_leaves_a_product_without_a_reorder_point():
+    """
+    ADD mode used to create products with min_stock_amount 0, at four separate
+    sites (`0 if mode == 'add' else 1`). A product with no minimum can never
+    reach GetMissingProducts, so it is carried forever and never asked for --
+    which is not tracking, it is a list. One evening's intake made 34 of them.
+
+    Tony, 2026-08-27: "i do not care to track it if it doesn't have a minimum."
+
+    Source-level because the four sites sit deep inside handle_barcode's
+    branching and a behavioural test would have to reproduce the whole scan
+    path. The thing worth pinning is that the mode-dependent form does not come
+    back -- it read as deliberate and was easy to miss in review.
+    """
+    import inspect
+    import pathlib
+
+    src = pathlib.Path(inspect.getsourcefile(main)).read_text()
+    offenders = [ln.strip() for ln in src.splitlines()
+                 if "min_stock" in ln and "mode" in ln and "=" in ln
+                 and not ln.strip().startswith("#")]
+    assert not offenders, f"mode-dependent minimum is back: {offenders}"
+
+
+def test_the_penzeys_refill_exceptions_are_deliberate_and_survive():
+    """
+    The blanket rule has exactly two exceptions, both load-bearing:
+
+      * the generic PARENT -- no_own_stock is a database CHECK, so it can never
+        hold stock; a minimum on it would put the generic name on the shopping
+        list instead of the container you actually buy
+      * the JAR child -- it is refilled from the bag, so a minimum would ask you
+        to buy something you never buy
+
+    Pinned because "every product gets a minimum" is exactly the kind of tidy
+    rule that would quietly delete them.
+    """
+    import inspect
+
+    src = inspect.getsource(main.penzeys_hierarchy)
+    assert "min_stock_amount=0," in src, "the generic parent must stay at 0"
+    assert 'min_stock_amount=1 if container == "bag" else 0' in src, \
+        "the jar must stay at 0 and the bag at 1"
