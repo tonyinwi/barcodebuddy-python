@@ -884,11 +884,18 @@ def handle_barcode(barcode: str, device: str = None):
                         if here:
                             logger.info(f"📍 placeholder in {here['name']} "
                                         f"(scanned location, not the preset)")
+                        # Filed under "Unknown" so the review queue is a group
+                        # filter rather than a name prefix. Everything else on the
+                        # scan path gets a group from the lookup or from review; a
+                        # placeholder resolved to nothing, so without this it is the
+                        # one product with no group at all -- indistinguishable from
+                        # an oversight rather than from the deliberate state it is.
                         product_id = grocy_client.create_product(
                             product_name,
                             description="Auto-created via Barcode Buddy - not found in any database",
                             min_stock_amount=min_stock,
-                            location_id=(here or {}).get("id")
+                            location_id=(here or {}).get("id"),
+                            product_group_id=grocy_client.find_product_group_id("Unknown")
                         )
 
                     if not product_id:

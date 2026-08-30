@@ -1,5 +1,32 @@
 # Changelog
 
+## 2.18.2-beta.39
+
+**An unresolved placeholder is filed under "Unknown", not left ungrouped.**
+
+`Unknown <barcode>` was the only product the scan path created with no product
+group at all. Every other route sets one -- the lookup returns it, or review
+assigns it -- so a placeholder was indistinguishable from a product somebody
+simply forgot to file. It is not an oversight; it is a deliberate state, and it
+now says so.
+
+That also makes the review queue a **group filter** rather than a name prefix,
+which matters because the name is the one thing about a placeholder that is
+guaranteed to change.
+
+- `create_product()` gains `product_group_id`, omitted from the payload when
+  None so nothing else on the scan path changes shape.
+- `find_product_group_id(name)` resolves the group **by name**, cached for the
+  process. Deliberately not a config value: a group id differs between this
+  Grocy and a restored backup, and a stale id fails *silently* -- Grocy accepts
+  an integer matching no group, and the product lands somewhere nobody can see.
+- A missing group is not an error. The field is omitted, the product is created
+  ungrouped exactly as before, and a warning is logged. Creating the group stays
+  a deliberate act rather than a side effect of a scan.
+
+The three existing placeholders were backfilled by hand.
+
+
 ## Fix: unknown barcodes ignored the scanned location
 
 Found by Tony scanning half a cabinet. Resolved products landed in Oils &
