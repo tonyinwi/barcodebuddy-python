@@ -337,6 +337,39 @@ class GrocyClient:
             return qu_id
         return 1  # Fallback to 1
 
+    def find_product_group_id(self, name: str) -> Optional[int]:
+        """
+        A product group id by name, cached for the process.
+
+        Looked up rather than configured, because a group id is exactly the kind
+        of number that drifts: it differs between this Grocy and a restored
+        backup, and a stale id in config fails silently -- Grocy accepts an
+        integer matching no group, so products land in a group nobody can see.
+        A name is stable, and a miss is visible.
+
+        Returns None when the group does not exist, which is not an error: the
+        caller omits the field and Grocy leaves the product ungrouped, exactly as
+        before. Creating the group is a deliberate act, not a side effect of a
+        scan.
+        """
+        cache = getattr(self, "_group_id_cache", None)
+        if cache is None:
+            cache = self._group_id_cache = {}
+        key = (name or "").strip().lower()
+        if key in cache:
+            return cache[key]
+        groups = self._request('GET', 'objects/product_groups') or []
+        found = None
+        for g in groups:
+            if str(g.get('name', '')).strip().lower() == key:
+                found = int(g['id'])
+                break
+        cache[key] = found
+        if found is None:
+            logger.warning(f"No product group named '{name}' in Grocy -- "
+                           f"placeholders will be left ungrouped")
+        return found
+
     def find_product_by_name(self, name: str) -> Optional[int]:
         """
         Find a product by its exact name (case-insensitive).
@@ -363,7 +396,8 @@ class GrocyClient:
                        qu_id_stock=None,
                        default_best_before_days: int = -1,
                        parent_product_id=None,
-                       no_own_stock: int = 0) -> Optional[int]:
+                       no_own_stock: int = 0,
+                       product_group_id=None) -> Optional[int]:
         """
         Create a new product in Grocy.
 
@@ -414,6 +448,8 @@ class GrocyClient:
             'min_stock_amount': min_stock_amount,
             'default_best_before_days': default_best_before_days
         }
+        if product_group_id is not None:
+            data['product_group_id'] = product_group_id
         if parent_product_id is not None:
             data['parent_product_id'] = parent_product_id
         if no_own_stock:
