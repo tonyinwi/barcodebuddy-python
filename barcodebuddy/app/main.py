@@ -838,8 +838,44 @@ def handle_barcode(barcode: str, device: str = None):
                                 logger.info(f"➖ Consumed '{product_name}' (ID {product_id}, quantity: {amount})")
                                 current_quantity = 0.0
                             else:
-                                scan_result['status'] = 'error'
-                                scan_result['message'] = f"❌ Failed to remove: {product_name} (no stock?)"
+                                # A CONSUME THAT FAILS FOR WANT OF STOCK IS NOT
+                                # A FAILURE OF THE SCAN -- it is the commonest
+                                # thing you do at a bin: throwing away the last
+                                # one of something Grocy already believes you
+                                # are out of.
+                                #
+                                # Reported as "Failed to remove" until
+                                # 2026-09-01, which is false twice over. It
+                                # calls a correct outcome an error, and it
+                                # hides the fact worth knowing -- whether the
+                                # thing is on the shopping list. Tony scanned a
+                                # pile into the bin and got three red crosses
+                                # for items that were already on the list.
+                                #
+                                # BINNED IS DEMAND. Grocy cannot say that with
+                                # a consume at zero stock, and a failed consume
+                                # is not a transaction, so auto-add never fires
+                                # either. So say it directly.
+                                if grocy_client.shopping_list_has(product_id):
+                                    scan_result['status'] = 'success'
+                                    scan_result['message'] = (
+                                        f"🛒 {product_name} — already on your list")
+                                    logger.info(f"🛒 '{product_name}' (ID {product_id}) "
+                                                "binned at 0 stock; already on the list")
+                                elif grocy_client.add_to_shopping_list(product_id):
+                                    scan_result['status'] = 'success'
+                                    scan_result['message'] = (
+                                        f"🛒 ➖ {product_name} — added to your list")
+                                    logger.info(f"🛒 '{product_name}' (ID {product_id}) "
+                                                "binned at 0 stock; added to the list")
+                                else:
+                                    # Only now is it genuinely a failure: no
+                                    # stock to draw down AND the list would not
+                                    # take it.
+                                    scan_result['status'] = 'error'
+                                    scan_result['message'] = (
+                                        f"❌ {product_name}: no stock to remove, "
+                                        "and could not reach the shopping list")
                         else:
                             # Brand-new product sits at 0 stock with min_stock_amount 1.
                             # Consuming would throw, and there is nothing to draw down --
