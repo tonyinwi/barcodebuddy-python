@@ -1011,12 +1011,28 @@
                 return;
             }
             err.textContent = '';
-            fetch('/api/locations/set', {
+            // RELATIVE, never '/api/...'. This page is served under Home
+            // Assistant's ingress prefix (/api/hassio_ingress/<token>/), so a
+            // leading slash escapes the add-on entirely and hits HOME
+            // ASSISTANT's own REST API -- which answers with HTML, so r.json()
+            // throws and the browser reports "The string did not match the
+            // expected pattern", pointing nowhere near the cause.
+            fetch('api/locations/set', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({gun: gun, location_id: Number(locSel.value)})
             })
-            .then(r => r.json().then(j => ({ok: r.ok, j})))
+            .then(r => r.text().then(body => {
+                // Parse defensively and say WHICH failure this is. A non-JSON
+                // body means the request did not reach the add-on at all; a
+                // raw SyntaxError makes that look like a bug in the endpoint.
+                try { return {ok: r.ok, j: JSON.parse(body)}; }
+                catch (e) {
+                    return {ok: false, j: {error:
+                        `The scanner answered ${r.status} with ${body.trim().slice(0, 40) || 'an empty body'}` +
+                        ` instead of JSON — that usually means the request missed the add-on.`}};
+                }
+            }))
             .then(({ok, j}) => {
                 // The server refuses an unknown location rather than guessing,
                 // so show its sentence -- "no Grocy location with id 13" says
