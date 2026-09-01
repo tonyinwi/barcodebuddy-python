@@ -177,6 +177,34 @@ class GrocyClient:
         result = self._request('POST', f'stock/products/{product_id}/add', json=data)
         return result is not None
 
+    def free_text_rows(self, list_id: int = 1):
+        """
+        Shopping-list rows that are TEXT, not products -- the staging area.
+
+        `shopping_list.product_id` is nullable; the AnyList migration parked 155
+        of the household's own lines there, and they have no exit except a human
+        saying *this scan is that line*.
+        """
+        rows = self._request('GET', 'objects/shopping_list') or []
+        if not isinstance(rows, list):
+            return []
+        return [r for r in rows
+                if not r.get('product_id')
+                and str(r.get('shopping_list_id') or 1) == str(list_id)
+                and str(r.get('note') or '').strip()]
+
+    def link_row_to_product(self, row_id: int, product_id: int) -> bool:
+        """
+        Point a free-text row at the product just scanned.
+
+        In place, so the line the household typed keeps its position. The
+        generic entity PUT merges, so `note` and `amount` survive -- verified,
+        because `PUT /stock/entry/{id}` replaces and is the trap next door.
+        """
+        r = self._request('PUT', f'objects/shopping_list/{int(row_id)}',
+                          json={'product_id': int(product_id)})
+        return r is not None
+
     def shopping_list_has(self, product_id: int, list_id: int = 1) -> bool:
         """
         Is this product already on the shopping list?

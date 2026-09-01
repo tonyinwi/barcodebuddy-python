@@ -870,6 +870,30 @@
                             </div>
                         ` : '';
 
+                        // STAGING LINES THIS SCAN MIGHT BE.
+                        // 155 rows on the shopping list are text the household
+                        // typed, and no scan matches one by name -- `Tide`
+                        // against `Dawn powerwash · Walmart`. Offered ranked
+                        // and tapped, never applied: the person is holding the
+                        // item, which is the only moment the answer is certain.
+                        // Absent entirely when there is nothing plausible, so
+                        // an ordinary scan looks exactly as it did.
+                        const staging = (scan.staging || []).length ? `
+                            <div style="margin-top:10px;padding:10px;background:#fffbeb;
+                                        border:1px solid #fcd34d;border-radius:6px;">
+                              <div style="font-size:12px;color:#92400e;margin-bottom:6px;">
+                                Is this one of these on your list?
+                              </div>
+                              ${scan.staging.map(s => `
+                                <button onclick="linkStaging(${s.row_id}, ${scan.product_id}, this)"
+                                        style="display:block;width:100%;text-align:left;
+                                               margin-bottom:4px;background:#fff;color:#44403c;
+                                               border:1px solid #e7e5e4;padding:7px 9px;
+                                               font-size:13px;">
+                                  ${esc(s.note)}
+                                </button>`).join('')}
+                            </div>` : '';
+
                         // No picture is a NORMAL outcome, not an error state --
                         // plenty of barcodes resolve without one -- so nothing
                         // is drawn rather than drawing a placeholder that reads
@@ -892,6 +916,7 @@
                                     </div>
                                     <div class="scan-message">${esc(scan.message)}</div>
                                     ${createProductForm}
+                                    ${staging}
                                     <div class="scan-time">${time}</div>
                                 </div>
                             </div>
@@ -1051,6 +1076,44 @@
         function escapeHtml(s) {
             return String(s == null ? '' : s).replace(/[&<>"']/g,
                 c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        }
+
+        // ---- linking a scan to a line already on the list ----
+        function linkStaging(rowId, productId, btn) {
+            // Optimistic on the button only, not on the feed: the row is gone
+            // from staging the moment Grocy accepts, and the next poll will
+            // stop offering it. Re-enabled on failure so a second tap is
+            // possible rather than the button looking spent.
+            const was = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'linking…';
+            fetch('api/staging/link', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({row_id: rowId, product_id: productId})
+            })
+            .then(r => r.text().then(body => {
+                try { return {ok: r.ok, j: JSON.parse(body)}; }
+                catch (e) { return {ok: false, j: {error:
+                    `The scanner answered ${r.status} with ${body.trim().slice(0,40) ||
+                     'an empty body'} instead of JSON.`}}; }
+            }))
+            .then(({ok, j}) => {
+                if (!ok || !j.success) {
+                    btn.disabled = false;
+                    btn.textContent = was;
+                    btn.style.borderColor = '#dc2626';
+                    btn.title = j.error || 'Could not link that line';
+                    return;
+                }
+                btn.textContent = '\u2713 linked to ' + j.product;
+                btn.style.background = '#dcfce7';
+                btn.style.borderColor = '#86efac';
+            })
+            .catch(e => {
+                btn.disabled = false; btn.textContent = was;
+                btn.title = 'Could not reach the scanner: ' + e;
+            });
         }
 
         function clearShelf(gun) {
