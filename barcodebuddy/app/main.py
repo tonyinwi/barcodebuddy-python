@@ -1101,6 +1101,13 @@ def locations_state():
     return jsonify({
         "idle_seconds": location_tracker.idle_seconds,
         "guns": _guns_for_ui(),
+        # `guns` above is only the ones CURRENTLY HOLDING A SHELF -- the
+        # tracker has no entry for a gun that has not been pointed anywhere.
+        # The picker needs the opposite list: every gun plugged in, so a shelf
+        # can be chosen for one that has never scanned.
+        "connected": [{"gun": f"usb:{g['usb']}" if g.get("usb") else None,
+                       "label": g.get("label"), "usb": g.get("usb")}
+                      for g in _connected_guns()],
         # The STORED slug where there is one -- what a printed label carries.
         "codes": [{"id": r.get("id"), "name": r.get("name"),
                    "barcode": loc.barcode_for_location(r),
@@ -1144,6 +1151,59 @@ def product_picture(product_id):
     resp.headers['Content-Type'] = r.headers.get('Content-Type', 'image/jpeg')
     resp.headers['Cache-Control'] = 'private, max-age=3600'
     return resp
+
+
+@app.route('/api/locations/set', methods=['POST'])
+def set_location():
+    """
+    Point a gun at a shelf from the UI, with no barcode to scan.
+
+    The printed label is still the fast path at a shelf -- one scan, hands
+    full, no screen. This is for the cases the label cannot serve: a shelf
+    whose label has not been printed yet, a code that will not read, or simply
+    standing at the laptop about to start an inventory.
+
+    ⚠️ **The location is validated against Grocy, not trusted from the form.**
+    Same rule the scanned path follows: `resolve()` refuses an unknown or
+    ambiguous code rather than guessing, because the cost of a wrong shelf is
+    every product scanned afterwards filed in the wrong room. A client sending
+    a stale id after somebody deleted the location in Grocy gets a refusal
+    naming the id, not a gun quietly pointed at nothing.
+
+    The gun is a tracker KEY (`usb:0581:011a`), matching what `/api/locations`
+    hands out and what `/api/locations/clear` already takes.
+    """
+    data = request.get_json(silent=True) or {}
+    gun = str(data.get('gun') or '').strip()
+    raw_id = data.get('location_id')
+
+    if not gun:
+        return jsonify({"success": False,
+                        "error": "which gun? pass the key from /api/locations"}), 400
+    try:
+        location_id = int(raw_id)
+    except (TypeError, ValueError):
+        return jsonify({"success": False,
+                        "error": f"location_id must be a number, got {raw_id!r}"}), 400
+
+    try:
+        rows = grocy_client.get_locations() if grocy_client else []
+    except Exception as err:                                     # noqa: BLE001
+        logger.warning(f"location set: could not read Grocy locations: {err}")
+        return jsonify({"success": False,
+                        "error": "could not reach Grocy to check that location"}), 502
+
+    match = next((r for r in rows if int(r.get("id") or 0) == location_id), None)
+    if match is None:
+        return jsonify({"success": False,
+                        "error": f"no Grocy location with id {location_id}"}), 404
+
+    name = str(match.get("name") or f"location {location_id}")
+    location_tracker.set_key(gun, location_id, name)
+    logger.info(f"📍 {config.gun_label(gun)} pointed at {name} from the UI "
+                f"(no barcode) — expires in {location_tracker.idle_seconds}s")
+    return jsonify({"success": True, "gun": gun, "location": name,
+                    "guns": _guns_for_ui()})
 
 
 @app.route('/api/locations/clear', methods=['POST'])
