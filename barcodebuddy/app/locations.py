@@ -155,6 +155,25 @@ class LocationTracker:
                 "id": location_id, "name": location_name, "at": time.monotonic(),
                 "counts": {k: 0 for k in self.OUTCOMES}}
 
+    def set_key(self, key, location_id, location_name):
+        """
+        Point a gun at a shelf when you already hold its KEY, not a device node.
+
+        `set()` takes a device because the scan path has one -- a location
+        barcode arrives from `/dev/hidrawN`. The UI has the opposite: it shows
+        guns by the key `_key()` produced, because that is the identity the
+        clear button and the shelf cards are already keyed on. Resolving that
+        key back to a device to hand to `set()` would be a round trip through
+        sysfs to arrive where we started, and it would pick ONE of the several
+        nodes a gun presents -- which is the bug `_key()` exists to prevent.
+
+        Same state, same shape, same zeroed counts as `set()`.
+        """
+        with self._lock:
+            self._by_device[str(key)] = {
+                "id": location_id, "name": location_name, "at": time.monotonic(),
+                "counts": {k: 0 for k in self.OUTCOMES}}
+
     def bump(self, device, outcome):
         """
         Record a product scan against the gun's current shelf.

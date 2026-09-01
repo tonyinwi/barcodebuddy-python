@@ -296,34 +296,80 @@
                     📄 {{ _('download_quantity_barcodes') }}
                 </button>
             </div>
-            <div style="margin-bottom: 15px;">
-                <!-- Generated from Grocy's real locations, so it always matches
-                     the house. Scan one at a shelf; what that gun scans next is
-                     created there, until 10 idle minutes pass.
+            <!-- One control for both shelf jobs, in a dialog.
+                 This was ~30 lines of always-on chrome -- a sheet picker, a
+                 Print button and three lines of paper-stock advice -- sitting
+                 above the scan feed on every screen, to serve a task you do
+                 once a year. The feed is what you read at a shelf. -->
+            <div style="margin-bottom:15px;display:flex;gap:6px;">
+                <button onclick="openShelfDialog()"
+                        style="flex:1;background:#0ea5e9;">
+                    📍 Set shelf &amp; print labels
+                </button>
+            </div>
 
-                     STOCK locations, not kitchen ones -- Grocy's cover the whole
-                     house: laundry fridge, garage freezer, basement pantry. -->
-                <label style="display:block;font-size:13px;color:#57534e;margin-bottom:6px;">
-                    📍 Stock location codes
-                </label>
-                <div style="display:flex;gap:6px;">
-                    <select id="label-sheet"
-                            style="flex:1;padding:8px;border:2px solid #0ea5e9;border-radius:5px;">
+            <dialog id="shelf-dialog"
+                    style="border:none;border-radius:10px;padding:0;max-width:420px;
+                           width:calc(100% - 32px);box-shadow:0 10px 40px rgba(0,0,0,.25);">
+              <form method="dialog" style="margin:0;">
+                <div style="padding:18px 18px 0;">
+                  <h2 style="margin:0 0 4px;font-size:18px;">📍 Stock location</h2>
+                  <p style="margin:0 0 16px;font-size:12px;color:#78716c;">
+                    What this gun scans next is created on the shelf you pick,
+                    until 10 idle minutes pass.
+                  </p>
+
+                  <label style="display:block;font-size:13px;color:#57534e;margin-bottom:6px;">
+                    Gun
+                  </label>
+                  <select id="shelf-gun"
+                          style="width:100%;padding:8px;border:2px solid #d6d3d1;
+                                 border-radius:5px;margin-bottom:12px;"></select>
+
+                  <label style="display:block;font-size:13px;color:#57534e;margin-bottom:6px;">
+                    Shelf
+                  </label>
+                  <select id="shelf-location"
+                          style="width:100%;padding:8px;border:2px solid #0ea5e9;
+                                 border-radius:5px;margin-bottom:6px;"></select>
+                  <div id="shelf-dialog-error"
+                       style="font-size:12px;color:#dc2626;min-height:16px;margin-bottom:10px;"></div>
+
+                  <button type="button" onclick="applyShelf()"
+                          style="width:100%;background:#0ea5e9;margin-bottom:18px;">
+                    Scan into this shelf
+                  </button>
+
+                  <!-- Printing is the once-a-year job, so it sits below the
+                       fold of the thing you came here to do. -->
+                  <details style="border-top:1px solid #e7e5e4;padding-top:12px;">
+                    <summary style="cursor:pointer;font-size:13px;color:#57534e;">
+                      Print location labels
+                    </summary>
+                    <div style="display:flex;gap:6px;margin:10px 0 6px;">
+                      <select id="label-sheet"
+                              style="flex:1;padding:8px;border:2px solid #d6d3d1;border-radius:5px;">
                         <option value="">Full-page cards</option>
                         <option value="8167" selected>Avery 8167 &mdash; 80 up</option>
                         <option value="5160">Avery 5160 &mdash; 30 up</option>
-                    </select>
-                    <button onclick="downloadLocationSheet()"
-                            style="background:#0ea5e9;white-space:nowrap;">
-                        Print
-                    </button>
+                      </select>
+                      <button type="button" onclick="downloadLocationSheet()"
+                              style="background:#0ea5e9;white-space:nowrap;">Print</button>
+                    </div>
+                    <div style="font-size:11px;color:#a8a29e;margin-bottom:4px;">
+                      8167 is verified here &mdash; 0.34&nbsp;mm modules, scans clean.
+                      Each sheet prints its own module size; 5160 is the roomier
+                      fallback for a fussier reader.
+                    </div>
+                  </details>
                 </div>
-                <div style="font-size:11px;color:#a8a29e;margin-top:5px;">
-                    8167 is verified here &mdash; 0.34&nbsp;mm modules, scans clean.
-                    Each sheet prints its own module size; 5160 is the roomier
-                    fallback for a fussier reader.
+                <div style="padding:14px 18px;background:#fafaf9;margin-top:16px;
+                            border-top:1px solid #e7e5e4;text-align:right;">
+                  <button value="cancel" style="background:#e7e5e4;color:#44403c;">Close</button>
                 </div>
-            </div>
+              </form>
+            </dialog>
+
             <div class="info-box">
                 <strong>{{ _('active_scanner_devices') }}:</strong>
                 {# Grouped by USB id, because one gun is several /dev/hidrawN
@@ -921,6 +967,76 @@
             }).join('');
         }
 
+        // ---- picking a shelf without a barcode ----
+        // The printed label stays the fast path at a shelf: one scan, hands
+        // full, no screen. This is for what the label cannot serve -- a shelf
+        // whose label is not printed, a code that will not read, or standing
+        // at the laptop about to start.
+        let SHELF_CODES = [];      // Grocy's locations, from /api/locations
+        let SHELF_GUNS = [];       // guns plugged in, whether or not they hold a shelf
+
+        function openShelfDialog() {
+            const d = document.getElementById('shelf-dialog');
+            const gunSel = document.getElementById('shelf-gun');
+            const locSel = document.getElementById('shelf-location');
+            const err = document.getElementById('shelf-dialog-error');
+            err.textContent = '';
+
+            // A gun with no readable USB id falls back to the global mode and
+            // cannot hold a location. Offered as disabled WITH THE REASON,
+            // rather than omitted -- a gun missing from the list looks like a
+            // gun that is unplugged.
+            gunSel.innerHTML = SHELF_GUNS.map(g => g.gun
+                ? `<option value="${g.gun}">${escapeHtml(g.label)}</option>`
+                : `<option disabled>${escapeHtml(g.label)} — USB id unreadable, cannot hold a shelf</option>`
+            ).join('') || '<option disabled>no scanner detected</option>';
+
+            // Pre-select the shelf this gun is already on, so the dialog opens
+            // showing the truth rather than the first location alphabetically.
+            const current = SHELVES[gunSel.value];
+            locSel.innerHTML = SHELF_CODES.map(c =>
+                `<option value="${c.id}"${current && current.id === c.id ? ' selected' : ''}>` +
+                `${escapeHtml(c.name)}</option>`).join('')
+                || '<option disabled>no locations in Grocy</option>';
+
+            if (typeof d.showModal === 'function') d.showModal(); else d.setAttribute('open', '');
+        }
+
+        function applyShelf() {
+            const gun = document.getElementById('shelf-gun').value;
+            const locSel = document.getElementById('shelf-location');
+            const err = document.getElementById('shelf-dialog-error');
+            if (!gun || !locSel.value) {
+                err.textContent = 'Pick a gun and a shelf first.';
+                return;
+            }
+            err.textContent = '';
+            fetch('/api/locations/set', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({gun: gun, location_id: Number(locSel.value)})
+            })
+            .then(r => r.json().then(j => ({ok: r.ok, j})))
+            .then(({ok, j}) => {
+                // The server refuses an unknown location rather than guessing,
+                // so show its sentence -- "no Grocy location with id 13" says
+                // what to do; "failed" does not.
+                if (!ok || !j.success) {
+                    err.textContent = j.error || 'Could not set the shelf.';
+                    return;
+                }
+                SHELVES = j.guns || SHELVES;
+                renderShelves();
+                document.getElementById('shelf-dialog').close();
+            })
+            .catch(e => { err.textContent = 'Could not reach the scanner: ' + e; });
+        }
+
+        function escapeHtml(s) {
+            return String(s == null ? '' : s).replace(/[&<>"']/g,
+                c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        }
+
         function clearShelf(gun) {
             // Optimistic: drop the card immediately rather than waiting for a
             // round trip. You press this while walking away from a shelf, and
@@ -941,7 +1057,15 @@
         function loadShelves() {
             fetch('api/locations')
                 .then(r => r.json())
-                .then(d => { SHELVES = d.guns || {}; renderShelves(); })
+                .then(d => {
+                    SHELVES = d.guns || {};
+                    // Kept fresh by the same poll the shelf cards already run,
+                    // so opening the dialog needs no round trip -- and a gun
+                    // unplugged mid-session drops out of the picker on its own.
+                    SHELF_CODES = d.codes || [];
+                    SHELF_GUNS = d.connected || [];
+                    renderShelves();
+                })
                 .catch(err => console.error('Load locations error:', err));
         }
 
