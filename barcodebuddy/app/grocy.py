@@ -177,6 +177,42 @@ class GrocyClient:
         result = self._request('POST', f'stock/products/{product_id}/add', json=data)
         return result is not None
 
+    def shopping_list_has(self, product_id: int, list_id: int = 1) -> bool:
+        """
+        Is this product already on the shopping list?
+
+        Asked so a bin scan can say *"already on your list"* rather than
+        *"failed"*. Returns False on any error -- an unreachable Grocy must
+        make the scanner cautious, not silent.
+        """
+        rows = self._request('GET', 'objects/shopping_list') or []
+        if not isinstance(rows, list):
+            return False
+        return any(str(r.get('product_id')) == str(product_id)
+                   and str(r.get('shopping_list_id') or 1) == str(list_id)
+                   for r in rows)
+
+    def add_to_shopping_list(self, product_id: int, amount: float = 1.0,
+                             list_id: int = 1) -> bool:
+        """
+        Put a product on the shopping list directly.
+
+        BINNED IS DEMAND, and Grocy cannot express that as a consume when stock
+        is already zero -- `ConsumeProduct()` throws unconditionally, there is
+        no setting, and a failed consume is not a stock transaction, so
+        `shopping_list_auto_add_below_min_stock_amount` never fires either.
+
+        So the scan says what the person meant: throwing this away means I need
+        another. That is stronger evidence than a minimum, and it works for a
+        product whose minimum is 0.
+        """
+        result = self._request('POST', 'stock/shoppinglist/add-product', json={
+            'product_id': int(product_id),
+            'product_amount': float(amount),
+            'list_id': int(list_id),
+        })
+        return result is not None
+
     def consume_product(self, product_id: int, amount: float = 1.0) -> bool:
         """Consume product from stock."""
         data = {
