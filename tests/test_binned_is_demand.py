@@ -87,16 +87,48 @@ def test_only_a_real_failure_is_reported_as_one():
     assert "could not reach the shopping list" in message
 
 
-def test_the_branch_in_main_py_matches_this_shape():
+def test_EVERY_scan_path_consume_site_uses_the_helper():
     """
-    The transcription above is only worth something if it still matches. Pins
-    the three outcomes by their message text, which is what a person at a bin
-    actually reads.
+    ⚠️ THE BUG THIS TEST EXISTS FOR.
+
+    The first fix changed ONE of four `consume_product()` call sites -- the
+    create path -- and shipped. A bin scan of a product already in Grocy goes
+    through a different site and still said "Failed to remove", so the fix
+    looked deployed and did nothing for the commonest case. Exactly the trap
+    `CLAUDE.md` records for `create_product()`: *"there are TWO call sites on
+    the scan path, and the second one is easy to miss."*
+
+    So: every consume in the scan path must be followed by a call to the
+    helper. The pending-resolve API (a human resolving an item in the UI) is a
+    different contract and is excluded by name rather than silently.
     """
+    import re
     src = (pathlib.Path(__file__).resolve().parents[1]
            / "barcodebuddy" / "app" / "main.py").read_text()
+    lines = src.splitlines()
+
+    sites = [i for i, l in enumerate(lines) if "grocy_client.consume_product(" in l]
+    assert len(sites) >= 3, f"expected several consume sites, found {len(sites)}"
+
+    unguarded = []
+    for i in sites:
+        window = "\n".join(lines[i:i + 30])
+        if "binned_is_demand(" in window:
+            continue
+        if "pending_item" in "\n".join(lines[max(0, i - 30):i + 5]):
+            continue                      # the pending-resolve API, different contract
+        unguarded.append(i + 1)
+
+    assert not unguarded, (
+        f"consume sites with no binned_is_demand() after them: lines {unguarded}. "
+        "A consume that fails for want of stock must record the demand.")
+
+
+def test_the_helper_and_its_client_calls_exist():
+    src = (pathlib.Path(__file__).resolve().parents[1]
+           / "barcodebuddy" / "app" / "main.py").read_text()
+    assert "def binned_is_demand(" in src
     for phrase in ("already on your list", "added to your list",
                    "could not reach the shopping list",
                    "shopping_list_has", "add_to_shopping_list"):
         assert phrase in src, f"main.py no longer contains {phrase!r}"
-    assert "Failed to remove:" not in src, "the false message is back"

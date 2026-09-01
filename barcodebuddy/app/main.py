@@ -435,6 +435,39 @@ def finish_scan(scan_result: dict):
     notify_webhook(scan_result)
 
 
+def binned_is_demand(product_id, product_name):
+    """
+    What a CONSUME that failed for want of stock actually means.
+
+    Returns `(status, message)`.
+
+    ⚠️ **THERE ARE FOUR consume_product() CALL SITES.** The first version of
+    this fixed one -- the create path -- and a bin scan of a product already in
+    Grocy went through a different one and still said "Failed to remove". Same
+    trap `CLAUDE.md` records for create_product(): *"the second one is easy to
+    miss"*. Hence one function rather than three copies, and a test that pins
+    every scan-path site calling it.
+
+    BINNED IS DEMAND. Grocy cannot say that with a consume at zero stock --
+    `ConsumeProduct()` throws unconditionally, there is no setting, and a FAILED
+    consume is not a stock transaction, so
+    `shopping_list_auto_add_below_min_stock_amount` never fires either. So say
+    it directly, and say which of the two things happened.
+    """
+    if grocy_client.shopping_list_has(product_id):
+        logger.info(f"\U0001F6D2 '{product_name}' (ID {product_id}) binned at 0 stock; "
+                    "already on the list")
+        return 'success', f"\U0001F6D2 {product_name} \u2014 already on your list"
+    if grocy_client.add_to_shopping_list(product_id):
+        logger.info(f"\U0001F6D2 '{product_name}' (ID {product_id}) binned at 0 stock; "
+                    "added to the list")
+        return 'success', f"\U0001F6D2 \u2796 {product_name} \u2014 added to your list"
+    logger.error(f"\u274C '{product_name}' (ID {product_id}): no stock to remove and "
+                 "the shopping list could not be reached")
+    return 'error', (f"\u274C {product_name}: no stock to remove, "
+                     "and could not reach the shopping list")
+
+
 def resolve_scan_mode(device: str = None) -> str:
     """
     Decide whether THIS scan means ADD or CONSUME.
@@ -639,6 +672,11 @@ def handle_barcode(barcode: str, device: str = None):
                     scan_result['message'] = f"{action_emoji} {action_text}: {product_name}{quantity_text}"
                     logger.info(f"{action_emoji} {action_text} product: {product_name} (quantity: {amount})")
                     current_quantity = 0.0  # Reset after successful operation
+                elif mode != 'add':
+                    # binned is demand. An ADD that fails is a real failure; a
+                    # CONSUME at zero stock is the commonest thing at a bin.
+                    scan_result['status'], scan_result['message'] = \
+                        binned_is_demand(product_id, product_name)
                 else:
                     scan_result['status'] = 'error'
                     scan_result['message'] = f"❌ Failed to {action_text.lower()}: {product_name}"
@@ -681,6 +719,10 @@ def handle_barcode(barcode: str, device: str = None):
                         scan_result['message'] = f"🔗 {action_emoji} {action_text} via alias: {product_name}{quantity_text}"
                         logger.info(f"🔗 {action_emoji} {action_text} product via alias: {product_name} (quantity: {amount})")
                         current_quantity = 0.0  # Reset after successful operation
+                    elif mode != 'add':
+                        # binned is demand -- see binned_is_demand()
+                        scan_result['status'], scan_result['message'] = \
+                            binned_is_demand(product_id, product_name)
                     else:
                         scan_result['status'] = 'error'
                         scan_result['message'] = f"❌ Failed to {action_text.lower()}: {product_name}"
@@ -838,44 +880,9 @@ def handle_barcode(barcode: str, device: str = None):
                                 logger.info(f"➖ Consumed '{product_name}' (ID {product_id}, quantity: {amount})")
                                 current_quantity = 0.0
                             else:
-                                # A CONSUME THAT FAILS FOR WANT OF STOCK IS NOT
-                                # A FAILURE OF THE SCAN -- it is the commonest
-                                # thing you do at a bin: throwing away the last
-                                # one of something Grocy already believes you
-                                # are out of.
-                                #
-                                # Reported as "Failed to remove" until
-                                # 2026-09-01, which is false twice over. It
-                                # calls a correct outcome an error, and it
-                                # hides the fact worth knowing -- whether the
-                                # thing is on the shopping list. Tony scanned a
-                                # pile into the bin and got three red crosses
-                                # for items that were already on the list.
-                                #
-                                # BINNED IS DEMAND. Grocy cannot say that with
-                                # a consume at zero stock, and a failed consume
-                                # is not a transaction, so auto-add never fires
-                                # either. So say it directly.
-                                if grocy_client.shopping_list_has(product_id):
-                                    scan_result['status'] = 'success'
-                                    scan_result['message'] = (
-                                        f"🛒 {product_name} — already on your list")
-                                    logger.info(f"🛒 '{product_name}' (ID {product_id}) "
-                                                "binned at 0 stock; already on the list")
-                                elif grocy_client.add_to_shopping_list(product_id):
-                                    scan_result['status'] = 'success'
-                                    scan_result['message'] = (
-                                        f"🛒 ➖ {product_name} — added to your list")
-                                    logger.info(f"🛒 '{product_name}' (ID {product_id}) "
-                                                "binned at 0 stock; added to the list")
-                                else:
-                                    # Only now is it genuinely a failure: no
-                                    # stock to draw down AND the list would not
-                                    # take it.
-                                    scan_result['status'] = 'error'
-                                    scan_result['message'] = (
-                                        f"❌ {product_name}: no stock to remove, "
-                                        "and could not reach the shopping list")
+                                # binned is demand -- see binned_is_demand()
+                                scan_result['status'], scan_result['message'] = \
+                                    binned_is_demand(product_id, product_name)
                         else:
                             # Brand-new product sits at 0 stock with min_stock_amount 1.
                             # Consuming would throw, and there is nothing to draw down --
