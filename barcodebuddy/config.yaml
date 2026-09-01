@@ -2,7 +2,7 @@ name: "Kitchen Scanner"
 # Bump this on EVERY deploy. It is the only cheap way to tell which build is
 # running: the add-on is built from a git branch, so without a bump the version
 # string is identical before and after a push and a stale clone is invisible.
-version: "2.18.2-beta.40"
+version: "2.18.2-beta.41"
 # slug is deliberately unchanged from upstream: Home Assistant identifies an
 # installed add-on by slug, so renaming it would orphan an existing install
 # and its configuration.
