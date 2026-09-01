@@ -3,6 +3,7 @@ from flask import (Flask, render_template, jsonify, request, session,
                    send_file, make_response)
 from flask_babel import Babel, gettext
 import logging
+import re
 import sys
 import os
 import requests
@@ -423,6 +424,19 @@ def _scan_outcome(scan_result: dict) -> str:
 
 def finish_scan(scan_result: dict):
     """Record a scan in recent history and tell Home Assistant about it."""
+    # STAGING LINES, OFFERED AT THE ONE MOMENT THE ANSWER IS CERTAIN.
+    # 155 rows on the shopping list are text the household typed and no scan
+    # will ever match by name -- `Tide` against `Dawn powerwash · Walmart`. So
+    # the scan carries a short ranked list and the person taps one. Nothing is
+    # applied here; fire-and-forget is untouched and the beep is the same.
+    try:
+        if scan_result.get("status") == "success" and scan_result.get("product_id"):
+            hits = staging_candidates(scan_result.get("product_name") or "")
+            if hits:
+                scan_result["staging"] = hits
+    except Exception as err:                                     # noqa: BLE001
+        logger.debug(f"staging candidates skipped: {err}")
+
     recent_scans.insert(0, scan_result)
     if len(recent_scans) > 50:
         recent_scans.pop()
@@ -433,6 +447,51 @@ def finish_scan(scan_result: dict):
     if outcome:
         location_tracker.bump(scan_result.get('device'), outcome)
     notify_webhook(scan_result)
+
+
+STAGING_STOPWORDS = {"the", "a", "of", "and", "with", "for", "oz", "ct", "pk",
+                     "pack", "count", "size", "large", "small", "fl"}
+
+
+def staging_candidates(product_name, limit=3):
+    """
+    Lines on the shopping list this scan might be, RANKED FOR A HUMAN TO PICK.
+
+    ⚠️ Deliberately offered, never applied. A scan produces a specific branded
+    name and a staging line is a generic human phrase -- `MiraLAX` against
+    `Magic eraser · Walmart`, `Tide` against `Dawn powerwash · Walmart` -- so an
+    exact match would fire for almost nothing and a fuzzy match that acted on
+    its own would be the wrong-join failure this project refuses everywhere
+    else.
+
+    The person is holding the item. That is the cheapest moment there will ever
+    be to answer *is this that*, and the only one where the answer is certain.
+
+    Ranking is shared words, minus packaging noise. Crude on purpose: it decides
+    the ORDER of a short list somebody reads, and nothing else.
+    """
+    if not grocy_client:
+        return []
+
+    def toks(s):
+        out = {w for w in re.split(r"[^a-z0-9]+", str(s or "").lower()) if len(w) > 2}
+        return out - STAGING_STOPWORDS
+
+    want = toks(product_name)
+    if not want:
+        return []
+
+    scored = []
+    for row in grocy_client.free_text_rows():
+        note = str(row.get("note") or "")
+        # The ` · store` suffix the import wrote is not part of the item.
+        text = note.rsplit(" \u00b7 ", 1)[0] if " \u00b7 " in note else note
+        overlap = want & toks(text)
+        if overlap:
+            scored.append((len(overlap), {"row_id": row.get("id"), "note": note,
+                                          "shared": sorted(overlap)}))
+    scored.sort(key=lambda x: -x[0])
+    return [s[1] for s in scored[:limit]]
 
 
 def binned_is_demand(product_id, product_name):
@@ -1194,6 +1253,52 @@ def product_picture(product_id):
     resp.headers['Content-Type'] = r.headers.get('Content-Type', 'image/jpeg')
     resp.headers['Cache-Control'] = 'private, max-age=3600'
     return resp
+
+
+@app.route('/api/staging/link', methods=['POST'])
+def link_staging_row():
+    """
+    Say that a scanned product IS one of the typed lines on the shopping list.
+
+    The row is repointed in place, so the line the household wrote keeps its
+    position -- a row that vanishes and reappears at the bottom reads, to
+    anybody else looking, as somebody deleting their item.
+
+    ⚠️ Both ids are checked against Grocy rather than trusted from the form. The
+    same rule the location endpoint follows: a wrong link here silently marks
+    somebody's request as satisfied by the wrong thing.
+    """
+    data = request.get_json(silent=True) or {}
+    try:
+        row_id = int(data.get('row_id'))
+        product_id = int(data.get('product_id'))
+    except (TypeError, ValueError):
+        return jsonify({"success": False,
+                        "error": "row_id and product_id must both be numbers"}), 400
+    if not grocy_client:
+        return jsonify({"success": False, "error": "no Grocy client"}), 503
+
+    rows = {int(r["id"]): r for r in grocy_client.free_text_rows()}
+    row = rows.get(row_id)
+    if row is None:
+        return jsonify({"success": False,
+                        "error": f"row {row_id} is not a free-text line any more -- "
+                                 "somebody may have dealt with it already"}), 404
+
+    info = grocy_client.get_product_info(product_id) or {}
+    product = info.get('product') if isinstance(info.get('product'), dict) else info
+    if not product:
+        return jsonify({"success": False,
+                        "error": f"no product {product_id}"}), 404
+
+    if not grocy_client.link_row_to_product(row_id, product_id):
+        return jsonify({"success": False, "error": "Grocy refused the update"}), 502
+
+    name = str(product.get('name') or product_id)
+    logger.info(f"🔗 staging row {row_id} ({str(row.get('note'))[:40]}) "
+                f"-> product {product_id} '{name}'")
+    return jsonify({"success": True, "row_id": row_id,
+                    "product": name, "note": row.get('note')})
 
 
 @app.route('/api/locations/set', methods=['POST'])
